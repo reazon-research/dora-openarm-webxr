@@ -1,0 +1,152 @@
+# Copyright 2026 Enactic, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+
+"""Low-latency THETA live-preview downlink for the WebXR front-end."""
+
+import asyncio
+import os
+import threading
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import requests
+from requests.auth import HTTPDigestAuth
+
+
+_configuration: dict = {}
+_latest_frame: bytes | None = None
+_sequence = 0
+_frame_lock = threading.Lock()
+_frame_event: asyncio.Event | None = None
+_event_loop: asyncio.AbstractEventLoop | None = None
+_stop_event = threading.Event()
+_thread: threading.Thread | None = None
+
+
+def configure(view_configuration: dict) -> None:
+    """Read THETA settings, allowing credentials to come from the environment."""
+    global _configuration
+    _configuration = (
+        dict(view_configuration.get("theta360") or {})
+        if view_configuration.get("view") == "theta360"
+        else {}
+    )
+    overrides = {
+        "host": os.getenv("THETA_HOST"),
+        "username": os.getenv("THETA_USERNAME"),
+        "password": os.getenv("THETA_PASSWORD"),
+    }
+    _configuration.update({key: value for key, value in overrides.items() if value})
+
+
+def _publish(frame: bytes) -> None:
+    global _latest_frame, _sequence
+    with _frame_lock:
+        _latest_frame = frame
+        _sequence += 1
+    if _event_loop is not None and _frame_event is not None:
+        _event_loop.call_soon_threadsafe(_frame_event.set)
+
+
+def _capture() -> None:
+    """Read MJPEG in a worker thread, retaining only its newest JPEG."""
+    url = _configuration["host"].rstrip("/") + "/osc/commands/execute"
+    preview_format = {
+        "width": int(_configuration.get("width", 1024)),
+        "height": int(_configuration.get("height", 512)),
+        "framerate": int(_configuration.get("framerate", 30)),
+    }
+    request = {
+        "name": "camera.getLivePreview",
+        "parameters": {"previewFormat": preview_format},
+    }
+    auth = HTTPDigestAuth(_configuration["username"], _configuration["password"])
+
+    while not _stop_event.is_set():
+        try:
+            with requests.post(
+                url,
+                json=request,
+                auth=auth,
+                stream=True,
+                timeout=(5, 5),
+            ) as response:
+                response.raise_for_status()
+                data = bytearray()
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if _stop_event.is_set():
+                        return
+                    if not chunk:
+                        continue
+                    data.extend(chunk)
+                    while True:
+                        start = data.find(b"\xff\xd8")
+                        if start < 0:
+                            # Bound memory on a malformed or disconnected stream.
+                            if len(data) > 1024 * 1024:
+                                del data[:-1]
+                            break
+                        end = data.find(b"\xff\xd9", start + 2)
+                        if end < 0:
+                            if start:
+                                del data[:start]
+                            break
+                        _publish(bytes(data[start : end + 2]))
+                        del data[: end + 2]
+        except (KeyError, OSError, requests.RequestException) as error:
+            if not _stop_event.is_set():
+                print(f"THETA preview disconnected: {error}", flush=True)
+                _stop_event.wait(1.0)
+
+
+def start() -> None:
+    """Start capture when the configured view uses the THETA panorama."""
+    global _event_loop, _frame_event, _thread
+    if _thread is not None or not _configuration:
+        return
+    _event_loop = asyncio.get_running_loop()
+    _frame_event = asyncio.Event()
+    _stop_event.clear()
+    _thread = threading.Thread(target=_capture, name="theta-preview", daemon=True)
+    _thread.start()
+
+
+async def stop() -> None:
+    """Ask the worker to stop without blocking the Dora event loop."""
+    global _thread
+    thread = _thread
+    if thread is None:
+        return
+    _stop_event.set()
+    await asyncio.to_thread(thread.join, 6.0)
+    _thread = None
+
+
+def register_routes(app: FastAPI, should_exit) -> None:
+    """Register the binary latest-frame WebSocket before the static mount."""
+
+    @app.websocket("/theta-video")
+    async def _theta_video_endpoint(websocket: WebSocket):
+        await websocket.accept()
+        sent = -1
+        try:
+            while not should_exit():
+                event = _frame_event
+                if event is None:
+                    await asyncio.sleep(0.1)
+                    continue
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                event.clear()
+                with _frame_lock:
+                    frame, sequence = _latest_frame, _sequence
+                if frame is None or sequence == sent:
+                    continue
+                sent = sequence
+                await websocket.send_bytes(frame)
+            await websocket.close()
+        except WebSocketDisconnect:
+            pass

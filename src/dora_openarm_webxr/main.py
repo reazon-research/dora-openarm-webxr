@@ -54,6 +54,7 @@ import yaml
 
 from .smoothing import OneEuroPoseSmoother
 from . import calibration
+from . import theta
 from . import video
 
 args = None
@@ -646,6 +647,7 @@ async def _calibration_endpoint():
 # The head camera routes are registered before the static files are
 # mounted on "/" because the mount matches every remaining path.
 video.register_routes(app, lambda: server.should_exit)
+theta.register_routes(app, lambda: server.should_exit)
 
 
 base_dir = os.path.dirname(__file__)
@@ -680,11 +682,15 @@ async def _main_async():
     global server
     server = uvicorn.Server(config)
 
+    theta.start()
+
     task_uvicorn = asyncio.create_task(_main_uvicorn())
     task_dora = asyncio.create_task(_main_dora())
-
-    await task_uvicorn
-    await task_dora
+    try:
+        await task_uvicorn
+        await task_dora
+    finally:
+        await theta.stop()
 
 
 def _environment_flag(name):
@@ -748,6 +754,7 @@ def main():
     args = parser.parse_args()
 
     video.configure(args)
+    theta.configure(video.view_configuration())
 
     global _CALIBRATION_ENABLED, _NECK_PIVOT_FILE
     _CALIBRATION_ENABLED = args.calibration

@@ -1,0 +1,20 @@
+# THETA X mono panorama for an immersive VR session.
+view: theta360
+
+session:
+  mode: immersive-vr
+
+theta360:
+  host: http://10.42.0.89
+  # Set THETA_USERNAME and THETA_PASSWORD in the node environment. These
+  # placeholders deliberately keep credentials out of source control.
+  username: YOUR_THETA_USERNAME
+  password: YOUR_THETA_PASSWORD
+  width: 1024
+  height: 512
+  framerate: 30
+  yaw_offset_deg: 0
+
+pose:
+  # Keep the existing fixed-view neutral hand position.
+  frame_offset: [-0.1, 0.0, 0.23]

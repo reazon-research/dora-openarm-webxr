@@ -14,6 +14,7 @@
 
 import { createInstructionPanel } from "./instructions.js";
 import { createCameraPanel } from "./panel.js";
+import { createPanoramaView } from "./panorama.js";
 import { createStereoPanel } from "./stereo.js";
 
 // Used only when the node's view configuration cannot be read.
@@ -44,7 +45,9 @@ if (navigator.xr) {
       // How many images: the default "mono" draws one, "stereo" draws
       // one per eye, and "none" shows no camera at all. Where they hang
       // is a separate question, answered by "panel: lock" below.
-      if (configuration.view === "stereo") {
+      if (configuration.view === "theta360") {
+        cameraPanel = createPanoramaView(configuration);
+      } else if (configuration.view === "stereo") {
         cameraPanel = createStereoPanel(configuration);
       } else if (configuration.view !== "none") {
         cameraPanel = createCameraPanel(configuration);
@@ -300,7 +303,10 @@ if (navigator.xr) {
     ])
       .then(([viewerSpace, localSpace]) => {
         const panel = configuration.panel || {};
-        const panelSpace = panel.lock === "head" ? viewerSpace : localSpace;
+        const panelSpace =
+          configuration.view === "theta360" || panel.lock !== "head"
+            ? localSpace
+            : viewerSpace;
         function onFrame(time, frame) {
           log("sources: " + session.inputSources.length);
           sendFrame(session, localSpace, time, frame);
