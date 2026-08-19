@@ -59,7 +59,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from scipy.spatial.transform import Rotation
 
-from . import calibration, video, webrtc
+from . import calibration, theta, video, webrtc
 from .smoothing import OneEuroPoseSmoother
 
 args = None
@@ -694,6 +694,11 @@ async def _offer_endpoint(offer: dict):
     return {"sdp": await webrtc_server.answer(offer["sdp"]), "type": "answer"}
 
 
+# The head camera routes are registered before the static files are
+# mounted on "/" because the mount matches every remaining path.
+theta.register_routes(app, lambda: server.should_exit)
+
+
 base_dir = os.path.dirname(__file__)
 app.mount("/", StaticFiles(directory=f"{base_dir}/static", html=True), name="static")
 
@@ -792,16 +797,20 @@ async def _main_hosted():
     global server
     server = uvicorn.Server(config)
 
+    theta.start()
+
     task_uvicorn = asyncio.create_task(_main_uvicorn())
     task_dora = asyncio.create_task(_main_dora())
-
-    await task_dora
-    # The peers are closed before uvicorn is waited on: its graceful
-    # shutdown can sit on a browser's idle keep-alive sockets, and the
-    # headset must hear the close -- and end its session -- without
-    # waiting behind that.
-    await webrtc_server.close()
-    await task_uvicorn
+    try:
+        await task_dora
+        # The peers are closed before uvicorn is waited on: its graceful
+        # shutdown can sit on a browser's idle keep-alive sockets, and the
+        # headset must hear the close -- and end its session -- without
+        # waiting behind that.
+        await webrtc_server.close()
+        await task_uvicorn
+    finally:
+        await theta.stop()
 
 
 async def _main_webrtc_only():
@@ -1016,6 +1025,8 @@ def main():
             parser.error(f"--ice-servers: {error}")
 
     video.configure(args)
+    theta.configure(video.view_configuration())
+    theta.configure(video.view_configuration())
 
     global _CALIBRATION_ENABLED, _ICE_SERVERS, _NECK_PIVOT_FILE, _QUIT_BUTTONS
     _CALIBRATION_ENABLED = args.calibration
