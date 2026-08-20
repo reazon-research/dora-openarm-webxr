@@ -40,7 +40,7 @@ const PANEL = {
   centerX: -0.62,
   centerY: 0.3,
 };
-const RETICLE = { distance: 1.0, size: 0.012 };
+const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };
 
 const BUTTONS = [
   {
@@ -92,6 +92,7 @@ class HudPanel {
   #canvas = null;
   #context = null;
   #clears = false;
+  #reticleDistance = RETICLE.defaultDistance;
   #stale = true;
   #websocket = null;
   #buttonX = false;
@@ -108,8 +109,11 @@ class HudPanel {
   #waistAngle = 0;
   #displayedWaistAngle = 0;
 
-  constructor({ clears }) {
+  constructor({ clears, reticleDistance }) {
     this.#clears = clears;
+    if (Number.isFinite(reticleDistance) && reticleDistance > 0) {
+      this.#reticleDistance = reticleDistance;
+    }
     this.#canvas = document.createElement("canvas");
     this.#canvas.width = CANVAS.width;
     this.#canvas.height = CANVAS.height;
@@ -481,10 +485,12 @@ class HudPanel {
       gl.bindTexture(gl.TEXTURE_2D, this.#texture);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-      const halfReticle = RETICLE.size / 2;
+      // Depth testing stays disabled, so sharing the camera plane cannot
+      // z-fight; this later draw deterministically keeps the dot visible.
+      const halfReticle = (RETICLE.angularSize * this.#reticleDistance) / 2;
       gl.uniform2f(this.#uniforms.u_half_extent, halfReticle, halfReticle);
       gl.uniform2f(this.#uniforms.u_center, 0, 0);
-      gl.uniform1f(this.#uniforms.u_distance, RETICLE.distance);
+      gl.uniform1f(this.#uniforms.u_distance, this.#reticleDistance);
       gl.bindTexture(gl.TEXTURE_2D, this.#reticleTexture);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }

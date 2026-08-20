@@ -87,6 +87,7 @@ if (navigator.xr) {
         cameraPanel === null &&
         wristPanels === null &&
         instructionPanel === null,
+      reticleDistance: configuration.panel?.distance,
     });
 
     // The node only speaks to say what came of a calibration run.

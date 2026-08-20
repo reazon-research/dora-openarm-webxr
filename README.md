@@ -213,7 +213,8 @@ timer and a normalized lifter pose indicator. On the left controller, tap X
 to start or stop the timer, or hold X for one second to reset it. A reset
 hold does not also trigger start or stop when the button is released. Y
 remains reserved for neck calibration. A small green reticle stays fixed at
-the center of the WebXR and desktop monitor views.
+the center of the WebXR and desktop monitor views. In WebXR it is drawn at the
+same depth as the configured camera panel.
 
 The lifter pose displays the latest value received on the optional
 `waist_height` Dora input. The input is a scalar normalized to `0.0`
