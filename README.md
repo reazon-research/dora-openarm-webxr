@@ -212,7 +212,8 @@ small HUD at the upper-left edge of the operator's view. It contains a
 timer and a normalized lifter pose indicator. On the left controller, tap X
 to start or stop the timer, or hold X for one second to reset it. A reset
 hold does not also trigger start or stop when the button is released. Y
-remains reserved for neck calibration.
+remains reserved for neck calibration. A small green reticle stays fixed at
+the center of the WebXR and desktop monitor views.
 
 The lifter pose displays the latest value received on the optional
 `waist_height` Dora input. The input is a scalar normalized to `0.0`
