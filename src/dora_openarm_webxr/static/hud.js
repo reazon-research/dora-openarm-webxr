@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-// A small head-locked timer and normalized lifter pose. The pose only displays
+// A compact head-locked timer and normalized lifter pose. The pose only uses
 // the 0..1 value supplied to the node's `waist_height` Dora input.
 
 const VERTEX_SHADER = `
@@ -30,34 +30,33 @@ void main() {
 }
 `;
 
-const CANVAS = { width: 1024, height: 512 };
-
-// Upper-left and away from the center of gaze. Values are in viewer-space
-// meters, so the panel follows the headset without reacting to a head turn.
-const PANEL = {
-  distance: 1.2,
-  width: 0.56,
-  centerX: -0.62,
-  centerY: 0.3,
-};
-const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };
-
-const BUTTONS = [
+// Values are in viewer-space meters, so both panels follow the headset without
+// reacting to a head turn. Their top edges are aligned across the display.
+const PANELS = [
   {
     id: "timer",
-    label: "X  TAP: START / STOP    HOLD: RESET",
-    x: 56,
-    y: 398,
-    width: 912,
-    height: 76,
+    canvas: { width: 320, height: 112 },
+    distance: 1.2,
+    width: 0.25,
+    centerX: 0,
+    centerY: 0.45,
+  },
+  {
+    id: "lifter",
+    canvas: { width: 200, height: 200 },
+    distance: 1.2,
+    width: 0.17,
+    centerX: 0.68,
+    centerY: 0.4,
   },
 ];
+const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };
 
 const LIFTER = {
-  centerX: 810,
-  groundY: 350,
-  minHipY: 292,
-  travel: 95,
+  centerX: 100,
+  groundY: 174,
+  minHipY: 145,
+  travel: 52,
 };
 const RESET_HOLD_MILLISECONDS = 1000;
 
@@ -87,10 +86,10 @@ class HudPanel {
   #buffer = null;
   #corner = null;
   #uniforms = {};
-  #texture = null;
+  #textures = new Map();
   #reticleTexture = null;
-  #canvas = null;
-  #context = null;
+  #canvases = new Map();
+  #contexts = new Map();
   #clears = false;
   #reticleDistance = RETICLE.defaultDistance;
   #stale = true;
@@ -114,10 +113,14 @@ class HudPanel {
     if (Number.isFinite(reticleDistance) && reticleDistance > 0) {
       this.#reticleDistance = reticleDistance;
     }
-    this.#canvas = document.createElement("canvas");
-    this.#canvas.width = CANVAS.width;
-    this.#canvas.height = CANVAS.height;
-    this.#context = this.#canvas.getContext("2d");
+    for (const panel of PANELS) {
+      const canvas = document.createElement("canvas");
+      canvas.width = panel.canvas.width;
+      canvas.height = panel.canvas.height;
+      canvas.className = panel.id;
+      this.#canvases.set(panel.id, canvas);
+      this.#contexts.set(panel.id, canvas.getContext("2d"));
+    }
 
     const websocket = new WebSocket(`wss://${location.host}/hud`);
     websocket.addEventListener("message", (event) => {
@@ -167,12 +170,15 @@ class HudPanel {
       gl.STATIC_DRAW,
     );
 
-    this.#texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.#texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    for (const panel of PANELS) {
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.#textures.set(panel.id, texture);
+    }
 
     const reticle = document.createElement("canvas");
     reticle.width = 32;
@@ -295,72 +301,31 @@ class HudPanel {
     return action;
   }
 
-  #drawButton(button) {
-    const context = this.#context;
-    const active = this.#running || this.#buttonX;
-    context.fillStyle = active ? "rgba(66, 190, 120, 0.95)" : "#30363d";
-    context.fillRect(button.x, button.y, button.width, button.height);
-    context.lineWidth = 3;
-    context.strokeStyle = "#8b949e";
-    context.strokeRect(button.x, button.y, button.width, button.height);
-    context.fillStyle = "#ffffff";
-    context.font = "bold 32px sans-serif";
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillText(
-      button.label,
-      button.x + button.width / 2,
-      button.y + button.height / 2,
-    );
-  }
-
   #drawLifter() {
-    const context = this.#context;
+    const panel = PANELS.find(({ id }) => id === "lifter");
+    const context = this.#contexts.get("lifter");
     const hipY = LIFTER.minHipY - this.#waistHeight * LIFTER.travel;
-    const shoulderY = hipY - 31;
-    const headY = hipY - 61;
+    const shoulderY = hipY - 24;
+    const headY = hipY - 48;
 
-    context.fillStyle = "#8b949e";
-    context.font = "bold 28px sans-serif";
-    context.textAlign = "left";
-    context.fillText("LIFTER", 620, 58);
-    context.fillStyle = "#ffffff";
-    context.font = "bold 40px sans-serif";
-    context.textAlign = "right";
-    context.fillText(`${Math.round(this.#waistHeight * 100)}%`, 968, 58);
-    context.fillStyle = "#8b949e";
-    context.font = "22px sans-serif";
-    context.fillText(`WAIST ${Math.round(this.#waistAngle)}°`, 968, 96);
+    context.clearRect(0, 0, panel.canvas.width, panel.canvas.height);
+    context.fillStyle = "rgba(13, 17, 23, 0.78)";
+    context.fillRect(0, 0, panel.canvas.width, panel.canvas.height);
 
     context.save();
     context.lineCap = "round";
-    context.strokeStyle = "#484f58";
-    context.lineWidth = 3;
-    context.setLineDash([8, 7]);
-    context.beginPath();
-    context.moveTo(682, LIFTER.minHipY - LIFTER.travel);
-    context.lineTo(682, LIFTER.minHipY);
-    context.stroke();
-    context.setLineDash([]);
-
-    context.fillStyle = "#8b949e";
-    context.font = "22px sans-serif";
-    context.textAlign = "right";
-    context.fillText("MAX", 664, LIFTER.minHipY - LIFTER.travel);
-    context.fillText("MIN", 664, LIFTER.minHipY);
-
     context.strokeStyle = "#58a6ff";
     context.fillStyle = "#58a6ff";
-    context.lineWidth = 8;
+    context.lineWidth = 7;
     context.beginPath();
-    context.moveTo(LIFTER.centerX - 48, LIFTER.groundY);
-    context.lineTo(LIFTER.centerX + 48, LIFTER.groundY);
+    context.moveTo(LIFTER.centerX - 30, LIFTER.groundY);
+    context.lineTo(LIFTER.centerX + 30, LIFTER.groundY);
     context.moveTo(LIFTER.centerX, LIFTER.groundY);
     context.lineTo(LIFTER.centerX, hipY);
     context.stroke();
 
     context.beginPath();
-    context.arc(LIFTER.centerX, hipY, 10, 0, Math.PI * 2);
+    context.arc(LIFTER.centerX, hipY, 8, 0, Math.PI * 2);
     context.fill();
 
     context.save();
@@ -369,37 +334,35 @@ class HudPanel {
     context.beginPath();
     context.moveTo(0, 0);
     context.lineTo(0, shoulderY - hipY);
-    context.moveTo(-34, shoulderY - hipY);
-    context.lineTo(34, shoulderY - hipY);
+    context.moveTo(-24, shoulderY - hipY);
+    context.lineTo(24, shoulderY - hipY);
     context.stroke();
-    context.lineWidth = 6;
+    context.lineWidth = 5;
     context.beginPath();
-    context.arc(0, headY - hipY, 18, 0, Math.PI * 2);
+    context.arc(0, headY - hipY, 14, 0, Math.PI * 2);
     context.stroke();
     context.restore();
     context.restore();
   }
 
   #draw(now) {
-    const context = this.#context;
-    context.clearRect(0, 0, CANVAS.width, CANVAS.height);
+    const panel = PANELS.find(({ id }) => id === "timer");
+    const context = this.#contexts.get("timer");
+    context.clearRect(0, 0, panel.canvas.width, panel.canvas.height);
     context.fillStyle = "rgba(13, 17, 23, 0.78)";
-    context.fillRect(0, 0, CANVAS.width, CANVAS.height);
+    context.fillRect(0, 0, panel.canvas.width, panel.canvas.height);
 
-    context.fillStyle = "#8b949e";
-    context.font = "bold 32px sans-serif";
-    context.textAlign = "left";
-    context.textBaseline = "middle";
-    context.fillText("TIMER", 56, 58);
     context.fillStyle = this.#running ? "#7ee787" : "#ffffff";
-    context.font = "bold 88px monospace";
-    context.fillText(formatTime(this.#elapsedAt(now)), 56, 136);
+    context.font = "bold 56px monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(
+      formatTime(this.#elapsedAt(now)),
+      panel.canvas.width / 2,
+      panel.canvas.height / 2,
+    );
 
     this.#drawLifter();
-
-    BUTTONS.forEach((button) => {
-      this.#drawButton(button);
-    });
   }
 
   updateCanvas(now = performance.now()) {
@@ -416,8 +379,8 @@ class HudPanel {
     return true;
   }
 
-  get canvas() {
-    return this.#canvas;
+  get canvases() {
+    return PANELS.map(({ id }) => this.#canvases.get(id));
   }
 
   #upload(now) {
@@ -426,15 +389,17 @@ class HudPanel {
     }
     const gl = this.#gl;
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.#texture);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      this.#canvas,
-    );
+    for (const panel of PANELS) {
+      gl.bindTexture(gl.TEXTURE_2D, this.#textures.get(panel.id));
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        this.#canvases.get(panel.id),
+      );
+    }
   }
 
   render(session, space, frame) {
@@ -457,8 +422,6 @@ class HudPanel {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     this.#upload(performance.now());
-    const halfWidth = PANEL.width / 2;
-    const halfHeight = (halfWidth * CANVAS.height) / CANVAS.width;
     gl.useProgram(this.#program);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
     gl.enableVertexAttribArray(this.#corner);
@@ -479,11 +442,20 @@ class HudPanel {
         false,
         view.transform.inverse.matrix,
       );
-      gl.uniform2f(this.#uniforms.u_half_extent, halfWidth, halfHeight);
-      gl.uniform2f(this.#uniforms.u_center, PANEL.centerX, PANEL.centerY);
-      gl.uniform1f(this.#uniforms.u_distance, PANEL.distance);
-      gl.bindTexture(gl.TEXTURE_2D, this.#texture);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      for (const panel of PANELS) {
+        const halfWidth = panel.width / 2;
+        const halfHeight =
+          (halfWidth * panel.canvas.height) / panel.canvas.width;
+        gl.uniform2f(this.#uniforms.u_half_extent, halfWidth, halfHeight);
+        gl.uniform2f(
+          this.#uniforms.u_center,
+          panel.centerX,
+          panel.centerY,
+        );
+        gl.uniform1f(this.#uniforms.u_distance, panel.distance);
+        gl.bindTexture(gl.TEXTURE_2D, this.#textures.get(panel.id));
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
 
       // Depth testing stays disabled, so sharing the camera plane cannot
       // z-fight; this later draw deterministically keeps the dot visible.

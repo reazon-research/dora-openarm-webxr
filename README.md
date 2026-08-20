@@ -207,20 +207,20 @@ instead of building latency.
 
 ## Head-locked HUD
 
-Every camera mode, including `mono`, `stereo` and `theta360`, shows a
-small HUD at the upper-left edge of the operator's view. It contains a
-timer and a normalized lifter pose indicator. On the left controller, tap X
-to start or stop the timer, or hold X for one second to reset it. A reset
-hold does not also trigger start or stop when the button is released. Y
-remains reserved for neck calibration. A small green reticle stays fixed at
-the center of the WebXR and desktop monitor views. In WebXR it is drawn at the
-same depth as the configured camera panel.
+Every camera mode, including `mono`, `stereo` and `theta360`, shows a compact
+timer at the upper center and a normalized lifter pose at the upper right of
+the operator's view. The panels omit labels and numeric pose values to keep
+the view clear. On the left controller, tap X to start or stop the timer, or
+hold X for one second to reset it. A reset hold does not also trigger start or
+stop when the button is released. Y remains reserved for neck calibration. A
+small green reticle stays fixed at the center of the WebXR and desktop monitor
+views. In WebXR it is drawn at the same depth as the configured camera panel.
 
 The lifter pose displays the latest value received on the optional
 `waist_height` Dora input. The input is a scalar normalized to `0.0`
 (minimum) through `1.0` (maximum); out-of-range values are clamped. The
 node does not infer this value from the headset pose. Until an input is
-received, the HUD displays the midpoint value `0.5` (50%). The optional
+received, the pose starts at the midpoint value `0.5`. The optional
 `waist_angle` input tilts the upper body from `0` degrees (upright) through
 `90` degrees (forward); it defaults to upright.
 

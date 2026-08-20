@@ -202,16 +202,28 @@ button.selected {
   position: absolute;
   z-index: 2;
   top: 5.25rem;
-  left: 1.25rem;
-  width: clamp(19rem, 32vw, 34rem);
-  filter: drop-shadow(0 0.65rem 1.4rem rgba(0, 0, 0, 0.5));
+  right: 0;
+  left: 0;
   pointer-events: none;
 }
 
 .hud canvas {
+  position: absolute;
+  top: 0;
   display: block;
-  width: 100%;
   height: auto;
+  filter: drop-shadow(0 0.65rem 1.4rem rgba(0, 0, 0, 0.5));
+}
+
+.hud .timer {
+  left: 50%;
+  width: clamp(10rem, 14vw, 14rem);
+  transform: translateX(-50%);
+}
+
+.hud .lifter {
+  right: 1.25rem;
+  width: clamp(7rem, 10vw, 10rem);
 }
 
 @media (max-width: 700px) {
@@ -229,8 +241,15 @@ button.selected {
 
   .hud {
     top: 4.8rem;
-    left: 0.75rem;
-    width: min(25rem, calc(100vw - 1.5rem));
+  }
+
+  .hud .timer {
+    width: min(9rem, 36vw);
+  }
+
+  .hud .lifter {
+    right: 0.75rem;
+    width: min(6.5rem, 26vw);
   }
 
   .wrist-video {
