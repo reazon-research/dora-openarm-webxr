@@ -41,6 +41,7 @@ import asyncio
 import collections
 import dora
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import json
 import numpy as np
@@ -531,9 +532,13 @@ async def _websocket_endpoint(websocket: WebSocket):
             type = response["type"]
             metadata = {"timestamp": time.time_ns()}
             if type == "session-start":
+                # A new browser session constructs a fresh local HUD. Reset the
+                # retained monitor copy to the same initial state.
+                hud.handle_timer_action("reset")
                 node.send_output("status", pa.array(["ready"]), metadata)
             elif type == "frame":
                 smoother_time = time.perf_counter()
+                hud.handle_timer_action(response.get("hud_timer_action"))
                 # An absent button is a released one, so a controller that
                 # falls asleep mid-run cannot leave the hands stopped. The
                 # client only sends the buttons on the profiles it knows, and
@@ -653,6 +658,14 @@ theta.register_routes(app, lambda: server.should_exit)
 
 
 base_dir = os.path.dirname(__file__)
+
+
+@app.get("/monitor", response_class=FileResponse)
+async def _monitor_endpoint():
+    """Serve the non-XR desktop monitor without requiring a trailing suffix."""
+    return f"{base_dir}/static/monitor.html"
+
+
 app.mount("/", StaticFiles(directory=f"{base_dir}/static", html=True), name="static")
 
 

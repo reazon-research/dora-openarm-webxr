@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { createHudPanel } from "./hud.js";
 import { createInstructionPanel } from "./instructions.js";
 import { createCameraPanel } from "./panel.js";
-import { createHudPanel } from "./hud.js";
 import { createPanoramaView } from "./panorama.js";
 import { createStereoPanel } from "./stereo.js";
 
@@ -26,7 +26,7 @@ const FALLBACK_CONFIGURATION = {
 };
 
 if (navigator.xr) {
-  let websocket = new WebSocket("wss://" + location.host + "/websocket");
+  let websocket = new WebSocket(`wss://${location.host}/websocket`);
   let runningSession = null;
   let configuration = null;
   let cameraPanel = null;
@@ -38,7 +38,7 @@ if (navigator.xr) {
   const configurationReady = fetch("view_configuration")
     .then((response) => response.json())
     .catch((error) => {
-      console.error("cannot read view configuration: " + error);
+      console.error(`cannot read view configuration: ${error}`);
       // So a missing file cannot stop the session starting.
       return FALLBACK_CONFIGURATION;
     })
@@ -87,17 +87,17 @@ if (navigator.xr) {
         instructionPanel.setResult(message);
       }
     } catch (error) {
-      console.error("cannot read a message from the node: " + error);
+      console.error(`cannot read a message from the node: ${error}`);
     }
   });
-  websocket.addEventListener("close", (event) => {
+  websocket.addEventListener("close", () => {
     websocket = null;
     if (runningSession) {
       runningSession.end();
       runningSession = null;
     }
   });
-  websocket.addEventListener("error", (event) => {
+  websocket.addEventListener("error", () => {
     websocket = null;
     if (runningSession) {
       runningSession.end();
@@ -105,11 +105,11 @@ if (navigator.xr) {
     }
   });
 
-  function log(message) {
+  function log(_message) {
     // document.getElementById("log").innerText += `${message}\n`;
     // websocket.send(JSON.stringify({type: "log", message: `${message}`}));
   }
-  function onSessionEnd(event) {
+  function onSessionEnd() {
     log("ended");
     if (cameraPanel) {
       cameraPanel.close();
@@ -173,7 +173,12 @@ if (navigator.xr) {
   }
   function sendFrameResponse(response) {
     if (hudPanel) {
-      hudPanel.setButton(response.button_x === true);
+      const timerAction = hudPanel.setButton(response.button_x === true);
+      if (timerAction) {
+        // The server retains this state so a desktop monitor opened midway
+        // through a run starts from the same timer value as the headset.
+        response.hud_timer_action = timerAction;
+      }
     }
     if (instructionPanel) {
       // An absent button is a released one, which is how the node reads
@@ -322,7 +327,7 @@ if (navigator.xr) {
             ? localSpace
             : viewerSpace;
         function onFrame(time, frame) {
-          log("sources: " + session.inputSources.length);
+          log(`sources: ${session.inputSources.length}`);
           sendFrame(session, localSpace, time, frame);
           if (cameraPanel) {
             cameraPanel.render(session, panelSpace, frame);
