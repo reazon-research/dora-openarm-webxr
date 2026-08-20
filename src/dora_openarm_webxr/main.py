@@ -59,7 +59,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from scipy.spatial.transform import Rotation
 
-from . import calibration, theta, video, webrtc
+from . import calibration, hud, theta, video, webrtc
 from .smoothing import OneEuroPoseSmoother
 
 args = None
@@ -694,8 +694,9 @@ async def _offer_endpoint(offer: dict):
     return {"sdp": await webrtc_server.answer(offer["sdp"]), "type": "answer"}
 
 
-# The head camera routes are registered before the static files are
-# mounted on "/" because the mount matches every remaining path.
+# HUD and THETA routes are registered before the static files are mounted
+# on "/" because the mount matches every remaining path.
+hud.register_routes(app, lambda: server.should_exit)
 theta.register_routes(app, lambda: server.should_exit)
 
 
@@ -774,6 +775,7 @@ async def _main_dora():
             # STOP rather than crashing out of the loop with _stop() unrun.
             if event is None or event["type"] == "STOP":
                 break
+            hud.handle_event(event)
             video.handle_event(event)
     finally:
         _send_quit_command()

@@ -15,6 +15,7 @@
 import { connect } from "./connection.js";
 import { createInstructionPanel } from "./instructions.js";
 import { createCameraPanel } from "./panel.js";
+import { createHudPanel } from "./hud.js";
 import { createPanoramaView } from "./panorama.js";
 import { createStereoPanel } from "./stereo.js";
 
@@ -31,6 +32,7 @@ if (navigator.xr) {
   let configuration = null;
   let cameraPanel = null;
   let instructionPanel = null;
+  let hudPanel = null;
 
   // The node pushes its configuration as soon as the connection opens,
   // so this page needs no route of its own to read it: whoever serves
@@ -63,6 +65,9 @@ if (navigator.xr) {
         clears: cameraPanel === null,
       });
     }
+    hudPanel = createHudPanel({
+      clears: cameraPanel === null && instructionPanel === null,
+    });
 
     // The node only speaks to say what came of a calibration run.
     opened.onCalibrationResult((message) => {
@@ -98,6 +103,9 @@ if (navigator.xr) {
     log("ended");
     if (cameraPanel) {
       cameraPanel.close();
+    }
+    if (hudPanel) {
+      hudPanel.close();
     }
     runningSession = null;
     if (connection) {
@@ -154,6 +162,9 @@ if (navigator.xr) {
     sendControl(response);
   }
   function sendFrameResponse(response) {
+    if (hudPanel) {
+      hudPanel.setButton(response.button_x === true);
+    }
     if (instructionPanel) {
       // An absent button is a released one, which is how the node reads
       // it too, so a controller that falls asleep or goes missing ends
@@ -286,6 +297,9 @@ if (navigator.xr) {
     if (instructionPanel) {
       instructionPanel.attach(gl);
     }
+    if (hudPanel) {
+      hudPanel.attach(gl);
+    }
 
     Promise.all([
       // The hand poses and the head pose are both read in the
@@ -313,6 +327,9 @@ if (navigator.xr) {
           // the viewer space so it stays readable through a head turn.
           if (instructionPanel) {
             instructionPanel.render(session, viewerSpace, frame);
+          }
+          if (hudPanel) {
+            hudPanel.render(session, viewerSpace, frame);
           }
           session.requestAnimationFrame(onFrame);
         }
