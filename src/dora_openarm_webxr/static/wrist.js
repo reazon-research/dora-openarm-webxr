@@ -37,8 +37,8 @@ const SIDE_BY_PREFIX = { 0: "left", 1: "right" };
 const DEFAULT_PANEL = {
   distance: 1.0,
   width: 0.38,
-  leftCenter: [-0.55, -0.32],
-  rightCenter: [0.55, -0.32],
+  leftCenter: [-0.55, 0.0],
+  rightCenter: [0.55, 0.0],
 };
 
 function compile(gl, type, source) {

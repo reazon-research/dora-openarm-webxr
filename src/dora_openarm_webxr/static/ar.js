@@ -28,8 +28,8 @@ const FALLBACK_CONFIGURATION = {
     enabled: true,
     distance: 1.0,
     width: 0.38,
-    left_center: [-0.55, -0.32],
-    right_center: [0.55, -0.32],
+    left_center: [-0.55, 0.0],
+    right_center: [0.55, 0.0],
   },
 };
 
