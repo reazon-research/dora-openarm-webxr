@@ -127,6 +127,29 @@ Anatomy varies, so tune it per operator, or measure it as described in
 `[0, 0, 0]` goes back to subtracting the headset position. A measured
 offset in `--neck-pivot-file` wins over this one.
 
+## Head-locked HUD
+
+Every camera mode, including `mono`, `stereo` and `theta360`, shows a
+small HUD at the upper-left edge of the operator's view. It contains a
+timer and a normalized waist-height bar. On the left controller, tap X
+to start or stop the timer, or hold X for one second to reset it. A reset
+hold does not also trigger start or stop when the button is released. Y
+remains reserved for neck calibration.
+
+The waist bar only displays the latest value received on the optional
+`waist_height` Dora input. The input is a scalar normalized to `0.0`
+(minimum) through `1.0` (maximum); out-of-range values are clamped. The
+node does not infer this value from the headset pose. Until an input is
+received, the HUD displays the midpoint value `0.5` (50%).
+
+For example, wire an independently normalized waist signal into the
+WebXR node with:
+
+```yaml
+inputs:
+  waist_height: waist-normalizer/waist_height
+```
+
 ## Calibrating the neck pivot
 
 Rather than guessing the offset, measure it: the operator turns their
@@ -200,13 +223,14 @@ and Chrome to debug this node without a VR device.
 
 ## Inputs
 
-This dora-rs node accepts the following data. Both are optional and
-only needed to show a head camera in the VR device.
+This dora-rs node accepts the following optional data. Camera inputs provide
+the VR image; `waist_height` drives the HUD gauge independently of the camera.
 
 | Input                | Type      | Description                                                              |
 |----------------------|-----------|--------------------------------------------------------------------------|
 | `camera_head_right`  | `uint8[]` | A JPEG image of the robot's head camera.                                 |
 | `camera_head_left`   | `uint8[]` | A JPEG image for the left eye. Only used by the stereo view.             |
+| `waist_height`       | `float32` | Optional normalized waist height. Values are clamped to `0.0`–`1.0` and displayed in the head-locked HUD. |
 
 ## Outputs
 

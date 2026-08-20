@@ -54,6 +54,7 @@ import yaml
 
 from .smoothing import OneEuroPoseSmoother
 from . import calibration
+from . import hud
 from . import theta
 from . import video
 
@@ -644,9 +645,10 @@ async def _calibration_endpoint():
     return {"enabled": _CALIBRATION_ENABLED}
 
 
-# The head camera routes are registered before the static files are
-# mounted on "/" because the mount matches every remaining path.
+# Streaming and HUD routes are registered before the static files are mounted
+# on "/" because the mount matches every remaining path.
 video.register_routes(app, lambda: server.should_exit)
+hud.register_routes(app, lambda: server.should_exit)
 theta.register_routes(app, lambda: server.should_exit)
 
 
@@ -666,6 +668,7 @@ async def _main_dora():
         event = node.next()
         if event["type"] == "STOP":
             break
+        hud.handle_event(event)
         video.handle_event(event)
     server.should_exit = True
 

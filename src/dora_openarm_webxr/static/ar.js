@@ -14,6 +14,7 @@
 
 import { createInstructionPanel } from "./instructions.js";
 import { createCameraPanel } from "./panel.js";
+import { createHudPanel } from "./hud.js";
 import { createPanoramaView } from "./panorama.js";
 import { createStereoPanel } from "./stereo.js";
 
@@ -30,6 +31,7 @@ if (navigator.xr) {
   let configuration = null;
   let cameraPanel = null;
   let instructionPanel = null;
+  let hudPanel = null;
   // Started early so the first frame is ready by session start. The
   // session can only start once this has resolved, so the view and the
   // panel are always set by then.
@@ -70,6 +72,9 @@ if (navigator.xr) {
             clears: cameraPanel === null,
           });
         }
+        hudPanel = createHudPanel({
+          clears: cameraPanel === null && instructionPanel === null,
+        });
         return configuration;
       }),
   );
@@ -108,6 +113,9 @@ if (navigator.xr) {
     log("ended");
     if (cameraPanel) {
       cameraPanel.close();
+    }
+    if (hudPanel) {
+      hudPanel.close();
     }
     runningSession = null;
     if (websocket) {
@@ -164,6 +172,9 @@ if (navigator.xr) {
     websocket.send(JSON.stringify(response));
   }
   function sendFrameResponse(response) {
+    if (hudPanel) {
+      hudPanel.setButton(response.button_x === true);
+    }
     if (instructionPanel) {
       // An absent button is a released one, which is how the node reads
       // it too, so a controller that falls asleep or goes missing ends
@@ -291,6 +302,9 @@ if (navigator.xr) {
     if (instructionPanel) {
       instructionPanel.attach(gl);
     }
+    if (hudPanel) {
+      hudPanel.attach(gl);
+    }
 
     Promise.all([
       // The hand poses and the head pose are both read in the
@@ -318,6 +332,9 @@ if (navigator.xr) {
           // the viewer space so it stays readable through a head turn.
           if (instructionPanel) {
             instructionPanel.render(session, viewerSpace, frame);
+          }
+          if (hudPanel) {
+            hudPanel.render(session, viewerSpace, frame);
           }
           session.requestAnimationFrame(onFrame);
         }
