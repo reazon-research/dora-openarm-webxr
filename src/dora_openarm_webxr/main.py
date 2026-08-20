@@ -56,6 +56,7 @@ import pyarrow as pa
 import uvicorn
 import yaml
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from scipy.spatial.transform import Rotation
 
@@ -577,6 +578,7 @@ def _process_frame(response, state):
         state.last_sequence = sequence
     metadata = {"timestamp": time.time_ns()}
     smoother_time = time.perf_counter()
+    hud.handle_timer_action(response.get("hud_timer_action"))
     # An absent button is a released one, so a controller that falls
     # asleep mid-run cannot leave the hands stopped. The client only
     # sends the buttons on the profiles it knows, and on those it sends
@@ -681,6 +683,9 @@ def _on_session_start():
     """Begin a session: fresh smoothers, fresh frame numbering."""
     global _state
     _state = _ConnectionState()
+    # A new browser session constructs a fresh local HUD. Reset the retained
+    # monitor copy to the same initial state.
+    hud.handle_timer_action("reset")
     node.send_output("status", pa.array(["ready"]), {"timestamp": time.time_ns()})
 
 
@@ -701,6 +706,14 @@ theta.register_routes(app, lambda: server.should_exit)
 
 
 base_dir = os.path.dirname(__file__)
+
+
+@app.get("/monitor", response_class=FileResponse)
+async def _monitor_endpoint():
+    """Serve the non-XR desktop monitor without requiring a trailing suffix."""
+    return f"{base_dir}/static/monitor.html"
+
+
 app.mount("/", StaticFiles(directory=f"{base_dir}/static", html=True), name="static")
 
 

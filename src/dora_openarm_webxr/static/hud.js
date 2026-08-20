@@ -38,7 +38,7 @@ const PANEL = {
   distance: 1.2,
   width: 0.56,
   centerX: -0.62,
-  centerY: 0.30,
+  centerY: 0.3,
 };
 
 const BUTTONS = [
@@ -106,15 +106,17 @@ class HudPanel {
     this.#canvas.height = CANVAS.height;
     this.#context = this.#canvas.getContext("2d");
 
-    const websocket = new WebSocket("wss://" + location.host + "/hud");
+    const websocket = new WebSocket(`wss://${location.host}/hud`);
     websocket.addEventListener("message", (event) => {
       try {
         const message = JSON.parse(event.data);
         if (message.type === "waist-height") {
           this.setWaistHeight(message.value);
+        } else if (message.type === "timer-state") {
+          this.setTimerState(message.running, message.elapsed_milliseconds);
         }
       } catch (error) {
-        console.error("cannot read a HUD message: " + error);
+        console.error(`cannot read a HUD message: ${error}`);
       }
     });
     this.#websocket = websocket;
@@ -199,6 +201,17 @@ class HudPanel {
       this.#displayedWaistHeight = displayed;
       this.#stale = true;
     }
+  }
+
+  setTimerState(running, elapsedMilliseconds) {
+    if (!Number.isFinite(elapsedMilliseconds)) {
+      return;
+    }
+    this.#running = running === true;
+    this.#elapsed = Math.max(0, elapsedMilliseconds);
+    this.#startedAt = performance.now();
+    this.#lastTick = -1;
+    this.#stale = true;
   }
 
   setButton(xPressed, now = performance.now()) {
@@ -289,19 +302,33 @@ class HudPanel {
     context.textAlign = "right";
     context.fillText("MAX 100%", BAR.x + BAR.width, 362);
 
-    BUTTONS.forEach((button) => this.#drawButton(button));
+    BUTTONS.forEach((button) => {
+      this.#drawButton(button);
+    });
   }
 
-  #upload(now) {
+  updateCanvas(now = performance.now()) {
     const tick = Math.floor(this.#elapsedAt(now) / 100);
     if (tick !== this.#lastTick) {
       this.#lastTick = tick;
       this.#stale = true;
     }
     if (!this.#stale) {
-      return;
+      return false;
     }
     this.#draw(now);
+    this.#stale = false;
+    return true;
+  }
+
+  get canvas() {
+    return this.#canvas;
+  }
+
+  #upload(now) {
+    if (!this.updateCanvas(now)) {
+      return;
+    }
     const gl = this.#gl;
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.#texture);
@@ -313,7 +340,6 @@ class HudPanel {
       gl.UNSIGNED_BYTE,
       this.#canvas,
     );
-    this.#stale = false;
   }
 
   render(session, space, frame) {
@@ -343,11 +369,7 @@ class HudPanel {
     gl.enableVertexAttribArray(this.#corner);
     gl.vertexAttribPointer(this.#corner, 2, gl.FLOAT, false, 0, 0);
     gl.uniform2f(this.#uniforms.u_half_extent, halfWidth, halfHeight);
-    gl.uniform2f(
-      this.#uniforms.u_center,
-      PANEL.centerX,
-      PANEL.centerY,
-    );
+    gl.uniform2f(this.#uniforms.u_center, PANEL.centerX, PANEL.centerY);
     gl.uniform1f(this.#uniforms.u_distance, PANEL.distance);
     gl.uniform1i(this.#uniforms.u_texture, 0);
     gl.activeTexture(gl.TEXTURE0);

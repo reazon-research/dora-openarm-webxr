@@ -13,9 +13,9 @@
 // limitations under the License.
 
 import { connect } from "./connection.js";
+import { createHudPanel } from "./hud.js";
 import { createInstructionPanel } from "./instructions.js";
 import { createCameraPanel } from "./panel.js";
-import { createHudPanel } from "./hud.js";
 import { createPanoramaView } from "./panorama.js";
 import { createStereoPanel } from "./stereo.js";
 
@@ -95,11 +95,11 @@ if (navigator.xr) {
     }
   }
 
-  function log(message) {
+  function log(_message) {
     // document.getElementById("log").innerText += `${message}\n`;
     // sendControl({type: "log", message: `${message}`});
   }
-  function onSessionEnd(event) {
+  function onSessionEnd() {
     log("ended");
     if (cameraPanel) {
       cameraPanel.close();
@@ -163,7 +163,12 @@ if (navigator.xr) {
   }
   function sendFrameResponse(response) {
     if (hudPanel) {
-      hudPanel.setButton(response.button_x === true);
+      const timerAction = hudPanel.setButton(response.button_x === true);
+      if (timerAction) {
+        // The server retains this state so a desktop monitor opened midway
+        // through a run starts from the same timer value as the headset.
+        response.hud_timer_action = timerAction;
+      }
     }
     if (instructionPanel) {
       // An absent button is a released one, which is how the node reads
@@ -317,7 +322,7 @@ if (navigator.xr) {
             ? localSpace
             : viewerSpace;
         function onFrame(time, frame) {
-          log("sources: " + session.inputSources.length);
+          log(`sources: ${session.inputSources.length}`);
           sendFrame(session, localSpace, time, frame);
           if (cameraPanel) {
             cameraPanel.render(session, panelSpace, frame);

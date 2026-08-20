@@ -194,6 +194,19 @@ The waist bar only displays the latest value received on the optional
 node does not infer this value from the headset pose. Until an input is
 received, the HUD displays the midpoint value `0.5` (50%).
 
+## Desktop monitor
+
+Open `https://${HOST_NAME}:8443/monitor` on a PC to watch the camera view
+without starting another WebXR session. The page draws the same timer and
+waist-height HUD over the live image. Timer start, stop and reset actions from
+the Quest X button are retained by the server, so a monitor opened partway
+through a run immediately continues from the current value.
+
+The stereo view defaults to the right eye and offers left-eye and split-screen
+buttons. The THETA view is shown as its flat equirectangular preview. Since this
+page consumes the application's camera streams, it does not include the Quest
+passthrough background or Horizon OS interface.
+
 For example, wire an independently normalized waist signal into the
 WebXR node with:
 
