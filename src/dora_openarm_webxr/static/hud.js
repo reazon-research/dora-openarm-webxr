@@ -3,8 +3,8 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-// A small head-locked timer and normalized waist-height gauge. The gauge only
-// displays the 0..1 value supplied to the node's `waist_height` Dora input.
+// A small head-locked timer and normalized lifter pose. The pose only displays
+// the 0..1 value supplied to the node's `waist_height` Dora input.
 
 const VERTEX_SHADER = `
 attribute vec2 a_corner;
@@ -52,7 +52,12 @@ const BUTTONS = [
   },
 ];
 
-const BAR = { x: 76, y: 290, width: 872, height: 38 };
+const LIFTER = {
+  centerX: 810,
+  groundY: 350,
+  minHipY: 292,
+  travel: 95,
+};
 const RESET_HOLD_MILLISECONDS = 1000;
 
 function compile(gl, type, source) {
@@ -98,6 +103,8 @@ class HudPanel {
 
   #waistHeight = 0.5;
   #displayedWaistHeight = 50;
+  #waistAngle = 0;
+  #displayedWaistAngle = 0;
 
   constructor({ clears }) {
     this.#clears = clears;
@@ -112,6 +119,8 @@ class HudPanel {
         const message = JSON.parse(event.data);
         if (message.type === "waist-height") {
           this.setWaistHeight(message.value);
+        } else if (message.type === "waist-angle") {
+          this.setWaistAngle(message.value);
         } else if (message.type === "timer-state") {
           this.setTimerState(message.running, message.elapsed_milliseconds);
         }
@@ -203,6 +212,18 @@ class HudPanel {
     }
   }
 
+  setWaistAngle(value) {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    this.#waistAngle = Math.max(0, Math.min(90, value));
+    const displayed = Math.round(this.#waistAngle);
+    if (displayed !== this.#displayedWaistAngle) {
+      this.#displayedWaistAngle = displayed;
+      this.#stale = true;
+    }
+  }
+
   setTimerState(running, elapsedMilliseconds) {
     if (!Number.isFinite(elapsedMilliseconds)) {
       return;
@@ -264,6 +285,72 @@ class HudPanel {
     );
   }
 
+  #drawLifter() {
+    const context = this.#context;
+    const hipY = LIFTER.minHipY - this.#waistHeight * LIFTER.travel;
+    const shoulderY = hipY - 31;
+    const headY = hipY - 61;
+
+    context.fillStyle = "#8b949e";
+    context.font = "bold 28px sans-serif";
+    context.textAlign = "left";
+    context.fillText("LIFTER", 620, 58);
+    context.fillStyle = "#ffffff";
+    context.font = "bold 40px sans-serif";
+    context.textAlign = "right";
+    context.fillText(`${Math.round(this.#waistHeight * 100)}%`, 968, 58);
+    context.fillStyle = "#8b949e";
+    context.font = "22px sans-serif";
+    context.fillText(`WAIST ${Math.round(this.#waistAngle)}°`, 968, 96);
+
+    context.save();
+    context.lineCap = "round";
+    context.strokeStyle = "#484f58";
+    context.lineWidth = 3;
+    context.setLineDash([8, 7]);
+    context.beginPath();
+    context.moveTo(682, LIFTER.minHipY - LIFTER.travel);
+    context.lineTo(682, LIFTER.minHipY);
+    context.stroke();
+    context.setLineDash([]);
+
+    context.fillStyle = "#8b949e";
+    context.font = "22px sans-serif";
+    context.textAlign = "right";
+    context.fillText("MAX", 664, LIFTER.minHipY - LIFTER.travel);
+    context.fillText("MIN", 664, LIFTER.minHipY);
+
+    context.strokeStyle = "#58a6ff";
+    context.fillStyle = "#58a6ff";
+    context.lineWidth = 8;
+    context.beginPath();
+    context.moveTo(LIFTER.centerX - 48, LIFTER.groundY);
+    context.lineTo(LIFTER.centerX + 48, LIFTER.groundY);
+    context.moveTo(LIFTER.centerX, LIFTER.groundY);
+    context.lineTo(LIFTER.centerX, hipY);
+    context.stroke();
+
+    context.beginPath();
+    context.arc(LIFTER.centerX, hipY, 10, 0, Math.PI * 2);
+    context.fill();
+
+    context.save();
+    context.translate(LIFTER.centerX, hipY);
+    context.rotate((this.#waistAngle * Math.PI) / 180);
+    context.beginPath();
+    context.moveTo(0, 0);
+    context.lineTo(0, shoulderY - hipY);
+    context.moveTo(-34, shoulderY - hipY);
+    context.lineTo(34, shoulderY - hipY);
+    context.stroke();
+    context.lineWidth = 6;
+    context.beginPath();
+    context.arc(0, headY - hipY, 18, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+    context.restore();
+  }
+
   #draw(now) {
     const context = this.#context;
     context.clearRect(0, 0, CANVAS.width, CANVAS.height);
@@ -279,28 +366,7 @@ class HudPanel {
     context.font = "bold 88px monospace";
     context.fillText(formatTime(this.#elapsedAt(now)), 56, 136);
 
-    context.fillStyle = "#8b949e";
-    context.font = "bold 28px sans-serif";
-    context.fillText("WAIST HEIGHT", 56, 213);
-    context.fillStyle = "#ffffff";
-    context.font = "bold 40px sans-serif";
-    context.textAlign = "right";
-    context.fillText(`${Math.round(this.#waistHeight * 100)}%`, 968, 213);
-
-    context.fillStyle = "#30363d";
-    context.fillRect(BAR.x, BAR.y, BAR.width, BAR.height);
-    context.fillStyle = "#1f6feb";
-    context.fillRect(BAR.x, BAR.y, BAR.width * this.#waistHeight, BAR.height);
-    const marker = BAR.x + this.#waistHeight * BAR.width;
-    context.fillStyle = "#ffffff";
-    context.fillRect(marker - 7, BAR.y - 9, 14, BAR.height + 18);
-
-    context.font = "26px sans-serif";
-    context.fillStyle = "#c9d1d9";
-    context.textAlign = "left";
-    context.fillText("MIN 0%", BAR.x, 362);
-    context.textAlign = "right";
-    context.fillText("MAX 100%", BAR.x + BAR.width, 362);
+    this.#drawLifter();
 
     BUTTONS.forEach((button) => {
       this.#drawButton(button);

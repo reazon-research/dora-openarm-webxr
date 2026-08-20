@@ -18,6 +18,18 @@ const states = {
     decoding: false,
   },
 };
+const wristStates = {
+  left: {
+    canvas: document.getElementById("wrist-left-video"),
+    queued: null,
+    decoding: false,
+  },
+  right: {
+    canvas: document.getElementById("wrist-right-video"),
+    queued: null,
+    decoding: false,
+  },
+};
 
 const status = document.getElementById("status");
 const placeholder = document.getElementById("placeholder");
@@ -27,8 +39,8 @@ const hud = createHudPanel({ clears: false });
 document.getElementById("hud").append(hud.canvas);
 
 let stopped = false;
-let videoSocket = null;
-let reconnectTimer = null;
+const sockets = new Set();
+const reconnectTimers = new Set();
 let receivedFrame = false;
 
 function websocketUrl(path) {
@@ -42,8 +54,7 @@ function renderHud(now) {
 }
 requestAnimationFrame(renderHud);
 
-function decodeLatest(eye) {
-  const state = states[eye];
+function decodeLatest(state) {
   if (state.decoding || !state.queued || stopped) {
     return;
   }
@@ -63,65 +74,95 @@ function decodeLatest(eye) {
       }
       canvas.getContext("2d").drawImage(bitmap, 0, 0);
       bitmap.close();
-      if (!receivedFrame) {
-        receivedFrame = true;
-        placeholder.hidden = true;
-      }
-      status.textContent = "Live";
+      state.onFrame();
     })
     .catch(() => {
-      status.textContent = "Could not decode a camera frame";
+      if (state.reportsErrors) {
+        status.textContent = "Could not decode a camera frame";
+      }
     })
     .finally(() => {
       state.decoding = false;
-      decodeLatest(eye);
+      decodeLatest(state);
     });
 }
 
-function queueFrame(eye, bytes) {
-  const state = states[eye];
+function queueFrame(group, name, bytes, onFrame, reportsErrors = false) {
+  const state = group[name];
   if (!state) {
     return;
   }
   // One replaceable slot prevents a slow desktop decoder accumulating delay.
   state.queued = new Blob([bytes], { type: "image/jpeg" });
-  decodeLatest(eye);
+  state.onFrame = onFrame;
+  state.reportsErrors = reportsErrors;
+  decodeLatest(state);
 }
 
-function connectVideo(path, receive) {
+function connectVideo(path, receive, { reportsStatus = true } = {}) {
   if (stopped) {
     return;
   }
-  status.textContent = "Connecting…";
+  if (reportsStatus) {
+    status.textContent = "Connecting…";
+  }
   const websocket = new WebSocket(websocketUrl(path));
   websocket.binaryType = "arraybuffer";
   websocket.addEventListener("open", () => {
-    status.textContent = receivedFrame
-      ? "Live"
-      : "Connected — waiting for video";
+    if (reportsStatus) {
+      status.textContent = receivedFrame
+        ? "Live"
+        : "Connected — waiting for video";
+    }
   });
   websocket.addEventListener("message", receive);
   websocket.addEventListener("close", () => {
+    sockets.delete(websocket);
     if (stopped) {
       return;
     }
-    status.textContent = "Video disconnected — reconnecting…";
-    reconnectTimer = setTimeout(() => connectVideo(path, receive), 1000);
+    if (reportsStatus) {
+      status.textContent = "Video disconnected — reconnecting…";
+    }
+    const timer = setTimeout(() => {
+      reconnectTimers.delete(timer);
+      connectVideo(path, receive, { reportsStatus });
+    }, 1000);
+    reconnectTimers.add(timer);
   });
   websocket.addEventListener("error", () => websocket.close());
-  videoSocket = websocket;
+  sockets.add(websocket);
+}
+
+function showCameraFrame() {
+  if (!receivedFrame) {
+    receivedFrame = true;
+    placeholder.hidden = true;
+  }
+  status.textContent = "Live";
 }
 
 function receiveCameraFrame(event) {
   const message = new Uint8Array(event.data);
   const eye = EYE_BY_PREFIX[message[0]];
   if (eye) {
-    queueFrame(eye, message.subarray(1));
+    queueFrame(states, eye, message.subarray(1), showCameraFrame, true);
   }
 }
 
 function receivePanoramaFrame(event) {
-  queueFrame("right", event.data);
+  queueFrame(states, "right", event.data, showCameraFrame, true);
+}
+
+function receiveWristFrame(event) {
+  const message = new Uint8Array(event.data);
+  const side = EYE_BY_PREFIX[message[0]];
+  if (side && message.length > 1) {
+    const state = wristStates[side];
+    queueFrame(wristStates, side, message.subarray(1), () => {
+      state.canvas.hidden = false;
+    });
+  }
 }
 
 function selectLayout(layout) {
@@ -147,6 +188,11 @@ fetch("/view_configuration")
     return response.json();
   })
   .then((configuration) => {
+    if (configuration.wrist_panels?.enabled !== false) {
+      connectVideo("/wrist-video", receiveWristFrame, {
+        reportsStatus: false,
+      });
+    }
     if (configuration.view === "theta360") {
       selectLayout("panorama");
       placeholder.textContent = "Waiting for a THETA 360 frame…";
@@ -169,9 +215,11 @@ fetch("/view_configuration")
 
 window.addEventListener("beforeunload", () => {
   stopped = true;
-  clearTimeout(reconnectTimer);
-  if (videoSocket) {
-    videoSocket.close();
+  for (const timer of reconnectTimers) {
+    clearTimeout(timer);
+  }
+  for (const socket of sockets) {
+    socket.close();
   }
   hud.close();
 });

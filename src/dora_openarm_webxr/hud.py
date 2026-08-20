@@ -13,11 +13,14 @@ import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 
-WAIST_HEIGHT_INPUT = "waist_height"
+LIFTER_HEIGHT_INPUT = "waist_height"
+WAIST_ANGLE_INPUT = "waist_angle"
 HUD_UPDATE_INTERVAL = 1.0 / 30.0
 
 _waist_height: float | None = None
 _waist_sequence = 0
+_waist_angle: float | None = None
+_waist_angle_sequence = 0
 _state_event = asyncio.Event()
 
 
@@ -69,8 +72,11 @@ _timer_sequence = 0
 
 
 def handle_event(event) -> bool:
-    """Keep the latest normalized waist height. Return whether it was ours."""
-    if event["type"] != "INPUT" or event["id"] != WAIST_HEIGHT_INPUT:
+    """Keep the latest lifter height or waist angle."""
+    if event["type"] != "INPUT" or event["id"] not in (
+        LIFTER_HEIGHT_INPUT,
+        WAIST_ANGLE_INPUT,
+    ):
         return False
 
     try:
@@ -80,9 +86,13 @@ def handle_event(event) -> bool:
     if not math.isfinite(value):
         return True
 
-    global _waist_height, _waist_sequence
-    _waist_height = min(1.0, max(0.0, value))
-    _waist_sequence += 1
+    global _waist_angle, _waist_angle_sequence, _waist_height, _waist_sequence
+    if event["id"] == LIFTER_HEIGHT_INPUT:
+        _waist_height = min(1.0, max(0.0, value))
+        _waist_sequence += 1
+    else:
+        _waist_angle = min(90.0, max(0.0, value))
+        _waist_angle_sequence += 1
     _state_event.set()
     return True
 
@@ -104,20 +114,36 @@ def register_routes(app: FastAPI, should_exit) -> None:
     async def _hud_endpoint(websocket: WebSocket):
         await websocket.accept()
         waist_sent = -1
+        waist_angle_sent = -1
         timer_sent = -1
         last_sent_at = 0.0
         loop = asyncio.get_running_loop()
         try:
             while not should_exit():
                 sent = False
-                if _waist_height is not None and _waist_sequence != waist_sent:
+                pose_changed = (
+                    _waist_height is not None and _waist_sequence != waist_sent
+                ) or (
+                    _waist_angle is not None
+                    and _waist_angle_sequence != waist_angle_sent
+                )
+                if pose_changed:
                     delay = HUD_UPDATE_INTERVAL - (loop.time() - last_sent_at)
                     if delay > 0:
                         await asyncio.sleep(delay)
-                    waist_sent = _waist_sequence
-                    await websocket.send_json(
-                        {"type": "waist-height", "value": _waist_height}
-                    )
+                    if _waist_height is not None and _waist_sequence != waist_sent:
+                        waist_sent = _waist_sequence
+                        await websocket.send_json(
+                            {"type": "waist-height", "value": _waist_height}
+                        )
+                    if (
+                        _waist_angle is not None
+                        and _waist_angle_sequence != waist_angle_sent
+                    ):
+                        waist_angle_sent = _waist_angle_sequence
+                        await websocket.send_json(
+                            {"type": "waist-angle", "value": _waist_angle}
+                        )
                     last_sent_at = loop.time()
                     sent = True
                 # Always send an initial timer state. It lets a PC opened after
