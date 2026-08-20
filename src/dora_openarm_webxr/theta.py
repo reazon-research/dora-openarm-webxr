@@ -57,11 +57,27 @@ def _capture() -> None:
         "height": int(_configuration.get("height", 512)),
         "framerate": int(_configuration.get("framerate", 30)),
     }
+    set_options_request = {
+        "name": "camera.setOptions",
+        "parameters": {"options": {"previewFormat": preview_format}},
+    }
     request = {
         "name": "camera.getLivePreview",
-        "parameters": {"previewFormat": preview_format},
+        "parameters": {},
     }
     auth = HTTPDigestAuth(_configuration["username"], _configuration["password"])
+
+    try:
+        with requests.post(
+            url,
+            json=set_options_request,
+            auth=auth,
+            timeout=(5, 5),
+        ) as response:
+            response.raise_for_status()
+    except (OSError, requests.RequestException) as error:
+        if not _stop_event.is_set():
+            print(f"THETA preview format not set: {error}", flush=True)
 
     while not _stop_event.is_set():
         try:
