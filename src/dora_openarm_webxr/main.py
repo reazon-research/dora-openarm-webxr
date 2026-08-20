@@ -699,8 +699,9 @@ async def _offer_endpoint(offer: dict):
     return {"sdp": await webrtc_server.answer(offer["sdp"]), "type": "answer"}
 
 
-# HUD and THETA routes are registered before the static files are mounted
+# Camera, HUD and THETA routes are registered before the static files are mounted
 # on "/" because the mount matches every remaining path.
+video.register_routes(app, lambda: server.should_exit)
 hud.register_routes(app, lambda: server.should_exit)
 theta.register_routes(app, lambda: server.should_exit)
 

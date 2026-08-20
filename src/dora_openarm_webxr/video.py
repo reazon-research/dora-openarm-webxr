@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Head camera video downlink for the WebXR front-end.
+"""Camera video downlinks for the WebXR front-end.
 
-Takes the JPEG images of the robot's head camera and forwards them to
-the VR device, so the operator can see the robot's workspace while
-teleoperating. The image is drawn on a panel fixed in the room.
+Takes JPEG images from the robot's head and wrist cameras and forwards
+them to the VR device. The head image is the main camera view; the wrist
+images are drawn as small head-locked panels in the lower corners.
 
 Frames leave on their own WebRTC video track, one per eye, so they never
 delay the pose messages that feed IK. This module only keeps the newest
@@ -30,6 +30,7 @@ import os
 import pathlib
 
 import yaml
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 # dora-rs input IDs mapped to the eye that the frame is rendered on.
 # The default mono view uses only the right eye; the stereo view uses
@@ -39,11 +40,29 @@ CAMERA_INPUTS = {
     "camera_head_right": "right",
 }
 
+# Wrist sides name panels, not headset eyes. Both panels are rendered to
+# both eyes so the operator can fuse them at a comfortable depth.
+WRIST_CAMERA_INPUTS = {
+    "camera_wrist_left": "left",
+    "camera_wrist_right": "right",
+}
+
+# Each wrist frame is sent as a binary WebSocket message prefixed with one
+# byte identifying its panel side, then the JPEG.
+CAMERA_PREFIX = {"left": b"\x00", "right": b"\x01"}
+
 # Used when no --view-configuration-file is given.
 DEFAULT_VIEW_CONFIGURATION: dict = {
     "view": "mono",
     "session": {"mode": "immersive-ar"},
     "panel": {"lock": "room", "distance": 1.3, "width": 1.5},
+    "wrist_panels": {
+        "enabled": True,
+        "distance": 1.0,
+        "width": 0.38,
+        "left_center": [-0.55, -0.32],
+        "right_center": [0.55, -0.32],
+    },
 }
 
 _frames: dict = {"left": None, "right": None}
@@ -54,16 +73,20 @@ _sequences: dict = {"left": 0, "right": 0}
 # A shared event would need every waiter to agree on when to clear it.
 _events: dict = {"left": asyncio.Event(), "right": asyncio.Event()}
 
+_wrist_frames: dict = {"left": None, "right": None}
+_wrist_sequences: dict = {"left": 0, "right": 0}
+_wrist_frame_event = asyncio.Event()
+
 _view_configuration: dict = DEFAULT_VIEW_CONFIGURATION
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add the head camera options to the node's argument parser."""
+    """Add the camera view options to the node's argument parser."""
     parser.add_argument(
         "--view-configuration-file",
         type=pathlib.Path,
         default=os.getenv("VIEW_CONFIGURATION_FILE"),
-        help="YAML file with the head camera panel parameters",
+        help="YAML file with the camera panel parameters",
     )
 
 
@@ -106,15 +129,26 @@ def eyes() -> list:
 
 
 def handle_event(event) -> bool:
-    """Store a head camera frame. Return whether the event was ours."""
-    if event["type"] != "INPUT" or event["id"] not in CAMERA_INPUTS:
+    """Store a head or wrist camera frame. Return whether it was ours."""
+    if event["type"] != "INPUT":
         return False
-    eye = CAMERA_INPUTS[event["id"]]
-    # The camera node sends JPEG data as a uint8 array.
-    _frames[eye] = event["value"].to_numpy(zero_copy_only=False).tobytes()
-    _sequences[eye] += 1
-    _events[eye].set()
-    return True
+    camera_id = event["id"]
+    if camera_id in CAMERA_INPUTS:
+        eye = CAMERA_INPUTS[camera_id]
+        # The camera node sends JPEG data as a uint8 array.
+        _frames[eye] = event["value"].to_numpy(zero_copy_only=False).tobytes()
+        _sequences[eye] += 1
+        _events[eye].set()
+        return True
+    if camera_id in WRIST_CAMERA_INPUTS:
+        side = WRIST_CAMERA_INPUTS[camera_id]
+        _wrist_frames[side] = event["value"].to_numpy(
+            zero_copy_only=False
+        ).tobytes()
+        _wrist_sequences[side] += 1
+        _wrist_frame_event.set()
+        return True
+    return False
 
 
 async def wait_next(eye: str, seen_sequence: int) -> tuple:
@@ -130,9 +164,49 @@ async def wait_next(eye: str, seen_sequence: int) -> tuple:
     return _frames[eye], _sequences[eye]
 
 
+def register_routes(app: FastAPI, should_exit) -> None:
+    """Register the wrist-camera WebSocket on the node's Web application."""
+
+    @app.websocket("/wrist-video")
+    async def _wrist_video_endpoint(websocket: WebSocket):
+        """Send each wrist's newest JPEG without delaying pose messages."""
+        await websocket.accept()
+        sides = ["left", "right"]
+        sent = {side: -1 for side in sides}
+        try:
+            while not should_exit():
+                sent_frame = False
+                for side in sides:
+                    if (
+                        _wrist_frames[side] is None
+                        or _wrist_sequences[side] == sent[side]
+                    ):
+                        continue
+                    sent[side] = _wrist_sequences[side]
+                    await websocket.send_bytes(
+                        CAMERA_PREFIX[side] + _wrist_frames[side]
+                    )
+                    sent_frame = True
+                if sent_frame:
+                    continue
+                try:
+                    await asyncio.wait_for(_wrist_frame_event.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                _wrist_frame_event.clear()
+            await websocket.close()
+        except WebSocketDisconnect:
+            pass
+
+
 def reset() -> None:
     """Forget every stored frame. For tests, which reuse the module."""
     for eye in _frames:
         _frames[eye] = None
         _sequences[eye] = 0
         _events[eye] = asyncio.Event()
+    global _wrist_frame_event
+    for side in _wrist_frames:
+        _wrist_frames[side] = None
+        _wrist_sequences[side] = 0
+    _wrist_frame_event = asyncio.Event()
