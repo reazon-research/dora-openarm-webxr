@@ -154,6 +154,35 @@ button.selected {
   display: none;
 }
 
+.wrist-cameras {
+  position: absolute;
+  z-index: 2;
+  inset: 4rem 0 0;
+  pointer-events: none;
+}
+
+.wrist-video {
+  position: absolute;
+  bottom: 1.25rem;
+  display: block;
+  width: clamp(12rem, 24vw, 28rem);
+  max-width: calc(50vw - 1.875rem);
+  max-height: 34vh;
+  border: 1px solid rgba(139, 148, 158, 0.5);
+  border-radius: 0.45rem;
+  background: #05070a;
+  box-shadow: 0 0.65rem 1.4rem rgba(0, 0, 0, 0.5);
+  object-fit: contain;
+}
+
+.wrist-video.left {
+  left: 1.25rem;
+}
+
+.wrist-video.right {
+  right: 1.25rem;
+}
+
 .hud {
   position: absolute;
   z-index: 2;
@@ -187,5 +216,18 @@ button.selected {
     top: 4.8rem;
     left: 0.75rem;
     width: min(25rem, calc(100vw - 1.5rem));
+  }
+
+  .wrist-video {
+    bottom: 0.75rem;
+    max-width: calc(50vw - 1.125rem);
+  }
+
+  .wrist-video.left {
+    left: 0.75rem;
+  }
+
+  .wrist-video.right {
+    right: 0.75rem;
   }
 }

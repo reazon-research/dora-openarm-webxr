@@ -209,22 +209,25 @@ instead of building latency.
 
 Every camera mode, including `mono`, `stereo` and `theta360`, shows a
 small HUD at the upper-left edge of the operator's view. It contains a
-timer and a normalized waist-height bar. On the left controller, tap X
+timer and a normalized lifter pose indicator. On the left controller, tap X
 to start or stop the timer, or hold X for one second to reset it. A reset
 hold does not also trigger start or stop when the button is released. Y
 remains reserved for neck calibration.
 
-The waist bar only displays the latest value received on the optional
+The lifter pose displays the latest value received on the optional
 `waist_height` Dora input. The input is a scalar normalized to `0.0`
 (minimum) through `1.0` (maximum); out-of-range values are clamped. The
 node does not infer this value from the headset pose. Until an input is
-received, the HUD displays the midpoint value `0.5` (50%).
+received, the HUD displays the midpoint value `0.5` (50%). The optional
+`waist_angle` input tilts the upper body from `0` degrees (upright) through
+`90` degrees (forward); it defaults to upright.
 
 ## Desktop monitor
 
 Open `https://${HOST_NAME}:8443/monitor` on a PC to watch the camera view
 without starting another WebXR session. The page draws the same timer and
-waist-height HUD over the live image. Timer start, stop and reset actions from
+lifter-pose HUD over the live image, with wrist-camera frames in the lower
+corners. Timer start, stop and reset actions from
 the Quest X button are retained by the server, so a monitor opened partway
 through a run immediately continues from the current value.
 
@@ -239,6 +242,7 @@ WebXR node with:
 ```yaml
 inputs:
   waist_height: waist-normalizer/waist_height
+  waist_angle: waist-controller/waist_angle
 ```
 
 ## Calibrating the neck pivot
@@ -315,7 +319,7 @@ and Chrome to debug this node without a VR device.
 ## Inputs
 
 This dora-rs node accepts the following optional data. Camera inputs provide
-the VR image; `waist_height` drives the HUD gauge independently of the camera.
+the VR image; `waist_height` drives the HUD pose independently of the camera.
 
 | Input                | Type      | Description                                                              |
 |----------------------|-----------|--------------------------------------------------------------------------|
@@ -323,7 +327,8 @@ the VR image; `waist_height` drives the HUD gauge independently of the camera.
 | `camera_head_left`   | `uint8[]` | A JPEG image for the left eye. Only used by the stereo view.             |
 | `camera_wrist_right` | `uint8[]` | A JPEG image shown in the lower-right wrist panel for both eyes.         |
 | `camera_wrist_left`  | `uint8[]` | A JPEG image shown in the lower-left wrist panel for both eyes.          |
-| `waist_height`       | `float32` | Optional normalized waist height. Values are clamped to `0.0`–`1.0` and displayed in the head-locked HUD. |
+| `waist_height`       | `float32` | Optional normalized lifter height. Values are clamped to `0.0`–`1.0` and displayed in the head-locked HUD. |
+| `waist_angle`        | `float32` | Optional upper-body angle in degrees. Values are clamped to `0`–`90`, where `0` is upright. |
 
 ## Outputs
 
