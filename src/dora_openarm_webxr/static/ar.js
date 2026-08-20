@@ -94,6 +94,7 @@ if (navigator.xr) {
             cameraPanel === null &&
             wristPanels === null &&
             instructionPanel === null,
+          reticleDistance: configuration.panel?.distance,
         });
         return configuration;
       }),
