@@ -182,8 +182,8 @@ offset in `--neck-pivot-file` wins over this one.
 ## Wrist cameras
 
 JPEG frames received on `camera_wrist_left` and `camera_wrist_right` are shown
-as two small, head-locked panels in the lower-left and lower-right of the WebXR
-view. Each panel is rendered to both headset eyes; the side names identify the
+as two small, head-locked panels at the left and right sides of the WebXR view.
+Each panel is rendered to both headset eyes; the side names identify the
 robot camera and panel position, not a headset eye. The wrist stream is
 independent of the main head-camera stream and does not delay pose messages.
 
@@ -196,8 +196,8 @@ wrist_panels:
   enabled: true
   distance: 1.0
   width: 0.38
-  left_center: [-0.55, -0.32]
-  right_center: [0.55, -0.32]
+  left_center: [-0.55, 0.0]
+  right_center: [0.55, 0.0]
 ```
 
 Distances and centers are in meters; positive x is right and positive y is up.
@@ -327,8 +327,8 @@ the VR image; `waist_height` drives the HUD pose independently of the camera.
 |----------------------|-----------|--------------------------------------------------------------------------|
 | `camera_head_right`  | `uint8[]` | A JPEG image of the robot's head camera.                                 |
 | `camera_head_left`   | `uint8[]` | A JPEG image for the left eye. Only used by the stereo view.             |
-| `camera_wrist_right` | `uint8[]` | A JPEG image shown in the lower-right wrist panel for both eyes.         |
-| `camera_wrist_left`  | `uint8[]` | A JPEG image shown in the lower-left wrist panel for both eyes.          |
+| `camera_wrist_right` | `uint8[]` | A JPEG image shown in the right-side wrist panel for both eyes.          |
+| `camera_wrist_left`  | `uint8[]` | A JPEG image shown in the left-side wrist panel for both eyes.           |
 | `waist_height`       | `float32` | Optional normalized lifter height. Values are clamped to `0.0`–`1.0` and displayed in the head-locked HUD. |
 | `waist_angle`        | `float32` | Optional upper-body angle in degrees. Values are clamped to `0`–`90`, where `0` is upright. |
 

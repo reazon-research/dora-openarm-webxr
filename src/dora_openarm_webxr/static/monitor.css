@@ -177,7 +177,7 @@ button.selected {
 
 .wrist-video {
   position: absolute;
-  bottom: 1.25rem;
+  top: 50%;
   display: block;
   width: clamp(12rem, 24vw, 28rem);
   max-width: calc(50vw - 1.875rem);
@@ -187,6 +187,7 @@ button.selected {
   background: #05070a;
   box-shadow: 0 0.65rem 1.4rem rgba(0, 0, 0, 0.5);
   object-fit: contain;
+  transform: translateY(-50%);
 }
 
 .wrist-video.left {
@@ -233,7 +234,6 @@ button.selected {
   }
 
   .wrist-video {
-    bottom: 0.75rem;
     max-width: calc(50vw - 1.125rem);
   }
 

@@ -16,7 +16,7 @@
 
 Takes JPEG images from the robot's head and wrist cameras and forwards
 them to the VR device. The head image is the main camera view; the wrist
-images are drawn as small head-locked panels in the lower corners.
+images are drawn as small head-locked panels at the left and right sides.
 
 Frames leave on their own WebRTC video track, one per eye, so they never
 delay the pose messages that feed IK. This module only keeps the newest
@@ -60,8 +60,8 @@ DEFAULT_VIEW_CONFIGURATION: dict = {
         "enabled": True,
         "distance": 1.0,
         "width": 0.38,
-        "left_center": [-0.55, -0.32],
-        "right_center": [0.55, -0.32],
+        "left_center": [-0.55, 0.0],
+        "right_center": [0.55, 0.0],
     },
 }
 
