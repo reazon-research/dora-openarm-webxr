@@ -36,7 +36,7 @@ const placeholder = document.getElementById("placeholder");
 const videoGrid = document.getElementById("video-grid");
 const eyeControls = document.getElementById("eye-controls");
 const hud = createHudPanel({ clears: false });
-document.getElementById("hud").append(hud.canvas);
+document.getElementById("hud").append(...hud.canvases);
 
 let stopped = false;
 const sockets = new Set();
