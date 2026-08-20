@@ -127,6 +127,32 @@ Anatomy varies, so tune it per operator, or measure it as described in
 `[0, 0, 0]` goes back to subtracting the headset position. A measured
 offset in `--neck-pivot-file` wins over this one.
 
+## Wrist cameras
+
+JPEG frames received on `camera_wrist_left` and `camera_wrist_right` are shown
+as two small, head-locked panels in the lower-left and lower-right of the WebXR
+view. Each panel is rendered to both headset eyes; the side names identify the
+robot camera and panel position, not a headset eye. The wrist stream is
+independent of the main head-camera stream and does not delay pose messages.
+
+Wrist panels are enabled by default and remain invisible until their inputs
+provide frames. Their viewer-space placement can be tuned in the same view
+configuration file used for the head camera:
+
+```yaml
+wrist_panels:
+  enabled: true
+  distance: 1.0
+  width: 0.38
+  left_center: [-0.55, -0.32]
+  right_center: [0.55, -0.32]
+```
+
+Distances and centers are in meters; positive x is right and positive y is up.
+Set `enabled: false` to avoid opening the wrist video stream. In the Dora
+dataflow, give both camera inputs `queue_size: 1` so stale frames are dropped
+instead of building latency.
+
 ## Head-locked HUD
 
 Every camera mode, including `mono`, `stereo` and `theta360`, shows a
@@ -243,6 +269,8 @@ the VR image; `waist_height` drives the HUD gauge independently of the camera.
 |----------------------|-----------|--------------------------------------------------------------------------|
 | `camera_head_right`  | `uint8[]` | A JPEG image of the robot's head camera.                                 |
 | `camera_head_left`   | `uint8[]` | A JPEG image for the left eye. Only used by the stereo view.             |
+| `camera_wrist_right` | `uint8[]` | A JPEG image shown in the lower-right wrist panel for both eyes.         |
+| `camera_wrist_left`  | `uint8[]` | A JPEG image shown in the lower-left wrist panel for both eyes.          |
 | `waist_height`       | `float32` | Optional normalized waist height. Values are clamped to `0.0`–`1.0` and displayed in the head-locked HUD. |
 
 ## Outputs

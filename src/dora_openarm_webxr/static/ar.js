@@ -17,12 +17,20 @@ import { createInstructionPanel } from "./instructions.js";
 import { createCameraPanel } from "./panel.js";
 import { createPanoramaView } from "./panorama.js";
 import { createStereoPanel } from "./stereo.js";
+import { createWristPanels } from "./wrist.js";
 
 // Used only when the node's view configuration cannot be read.
 const FALLBACK_CONFIGURATION = {
   view: "mono",
   session: { mode: "immersive-ar" },
   panel: { lock: "room", distance: 1.3, width: 1.5 },
+  wrist_panels: {
+    enabled: true,
+    distance: 1.0,
+    width: 0.38,
+    left_center: [-0.55, -0.32],
+    right_center: [0.55, -0.32],
+  },
 };
 
 if (navigator.xr) {
@@ -30,6 +38,7 @@ if (navigator.xr) {
   let runningSession = null;
   let configuration = null;
   let cameraPanel = null;
+  let wristPanels = null;
   let instructionPanel = null;
   let hudPanel = null;
   // Started early so the first frame is ready by session start. The
@@ -54,6 +63,14 @@ if (navigator.xr) {
       } else if (configuration.view !== "none") {
         cameraPanel = createCameraPanel(configuration);
       }
+      // Wrist panels are enabled by default but remain invisible until their
+      // Dora inputs supply JPEG frames. Set wrist_panels.enabled to false to
+      // avoid opening their independent video stream altogether.
+      if (configuration.wrist_panels?.enabled !== false) {
+        wristPanels = createWristPanels(configuration, {
+          clears: cameraPanel === null,
+        });
+      }
       return configuration;
     });
   // Only a node started with --calibration wants the instructions, and
@@ -69,11 +86,14 @@ if (navigator.xr) {
       .then((calibration) => {
         if (calibration.enabled) {
           instructionPanel = createInstructionPanel({
-            clears: cameraPanel === null,
+            clears: cameraPanel === null && wristPanels === null,
           });
         }
         hudPanel = createHudPanel({
-          clears: cameraPanel === null && instructionPanel === null,
+          clears:
+            cameraPanel === null &&
+            wristPanels === null &&
+            instructionPanel === null,
         });
         return configuration;
       }),
@@ -113,6 +133,9 @@ if (navigator.xr) {
     log("ended");
     if (cameraPanel) {
       cameraPanel.close();
+    }
+    if (wristPanels) {
+      wristPanels.close();
     }
     if (hudPanel) {
       hudPanel.close();
@@ -304,6 +327,9 @@ if (navigator.xr) {
     if (cameraPanel) {
       cameraPanel.attach(gl);
     }
+    if (wristPanels) {
+      wristPanels.attach(gl);
+    }
     if (instructionPanel) {
       instructionPanel.attach(gl);
     }
@@ -331,6 +357,9 @@ if (navigator.xr) {
           sendFrame(session, localSpace, time, frame);
           if (cameraPanel) {
             cameraPanel.render(session, panelSpace, frame);
+          }
+          if (wristPanels) {
+            wristPanels.render(session, viewerSpace, frame);
           }
           // After the camera view, so the text is over the image rather
           // than cleared away with the rest of the frame, and always in

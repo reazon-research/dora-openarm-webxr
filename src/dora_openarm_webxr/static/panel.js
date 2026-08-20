@@ -46,7 +46,7 @@ void main() {
 }
 `;
 
-// Must match EYE_PREFIX in video.py.
+// Must match CAMERA_PREFIX in video.py.
 const RIGHT_EYE_PREFIX = 1;
 
 function compile(gl, type, source) {

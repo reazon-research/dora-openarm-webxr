@@ -58,7 +58,7 @@ void main() {
 `;
 
 const EYES = ["left", "right"];
-// Must match EYE_PREFIX in video.py.
+// Must match CAMERA_PREFIX in video.py.
 const EYE_BY_PREFIX = { 0: "left", 1: "right" };
 
 // Used when the configuration misses the stereo-only sections.
