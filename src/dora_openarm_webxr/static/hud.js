@@ -40,6 +40,7 @@ const PANEL = {
   centerX: -0.62,
   centerY: 0.3,
 };
+const RETICLE = { distance: 1.0, size: 0.012 };
 
 const BUTTONS = [
   {
@@ -87,6 +88,7 @@ class HudPanel {
   #corner = null;
   #uniforms = {};
   #texture = null;
+  #reticleTexture = null;
   #canvas = null;
   #context = null;
   #clears = false;
@@ -167,6 +169,29 @@ class HudPanel {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    const reticle = document.createElement("canvas");
+    reticle.width = 32;
+    reticle.height = 32;
+    const reticleContext = reticle.getContext("2d");
+    reticleContext.fillStyle = "#7ee787";
+    reticleContext.beginPath();
+    reticleContext.arc(16, 16, 10, 0, Math.PI * 2);
+    reticleContext.fill();
+    this.#reticleTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.#reticleTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      reticle,
+    );
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   }
 
@@ -434,12 +459,8 @@ class HudPanel {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
     gl.enableVertexAttribArray(this.#corner);
     gl.vertexAttribPointer(this.#corner, 2, gl.FLOAT, false, 0, 0);
-    gl.uniform2f(this.#uniforms.u_half_extent, halfWidth, halfHeight);
-    gl.uniform2f(this.#uniforms.u_center, PANEL.centerX, PANEL.centerY);
-    gl.uniform1f(this.#uniforms.u_distance, PANEL.distance);
     gl.uniform1i(this.#uniforms.u_texture, 0);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.#texture);
 
     for (const view of pose.views) {
       const viewport = layer.getViewport(view);
@@ -454,6 +475,17 @@ class HudPanel {
         false,
         view.transform.inverse.matrix,
       );
+      gl.uniform2f(this.#uniforms.u_half_extent, halfWidth, halfHeight);
+      gl.uniform2f(this.#uniforms.u_center, PANEL.centerX, PANEL.centerY);
+      gl.uniform1f(this.#uniforms.u_distance, PANEL.distance);
+      gl.bindTexture(gl.TEXTURE_2D, this.#texture);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      const halfReticle = RETICLE.size / 2;
+      gl.uniform2f(this.#uniforms.u_half_extent, halfReticle, halfReticle);
+      gl.uniform2f(this.#uniforms.u_center, 0, 0);
+      gl.uniform1f(this.#uniforms.u_distance, RETICLE.distance);
+      gl.bindTexture(gl.TEXTURE_2D, this.#reticleTexture);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     gl.disable(gl.BLEND);
