@@ -59,7 +59,12 @@ def _capture() -> None:
     }
     set_options_request = {
         "name": "camera.setOptions",
-        "parameters": {"options": {"previewFormat": preview_format}},
+        "parameters": {
+            "options": {
+                "previewFormat": preview_format,
+                "_topBottomCorrection": "Disapply",
+            }
+        },
     }
     request = {
         "name": "camera.getLivePreview",
