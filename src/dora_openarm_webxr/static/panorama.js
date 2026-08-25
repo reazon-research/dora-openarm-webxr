@@ -94,30 +94,44 @@ export const REAR_VIEW = {
 // inverts the ray reconstruction the fragment shader does: that shader turns a
 // pixel into a direction, and this turns a point at `distance` back into
 // pixels, so the window lines up with a HUD panel given the same numbers.
-function rearViewportRect(view, viewport) {
+// Where one eye sits inside the head. The window is placed relative to the
+// head, so without this both eyes are given the same rectangle — which is what
+// infinitely far away means, and is why the window used to float behind the
+// panel beside it instead of sharing its plane.
+function eyeOffset(pose, view) {
+  const m = pose.transform.inverse.matrix;
+  const p = view.transform.position;
+  return {
+    x: m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12],
+    y: m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13],
+    z: m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14],
+  };
+}
+
+function rearViewportRect(view, viewport, eye) {
   const scaleX = view.projectionMatrix[0];
   const scaleY = view.projectionMatrix[5];
   const offsetX = view.projectionMatrix[8];
   const offsetY = view.projectionMatrix[9];
-  const distance = REAR_VIEW.distance;
-  const toPixels = (value, scale, offset, origin, size) =>
-    origin + ((scale * (value / distance) - offset + 1) / 2) * size;
+  const depth = REAR_VIEW.distance + eye.z;
+  const toPixels = (value, from, scale, offset, origin, size) =>
+    origin + ((scale * ((value - from) / depth) - offset + 1) / 2) * size;
 
   const left = toPixels(
     REAR_VIEW.centerX - REAR_VIEW.width / 2,
-    scaleX, offsetX, viewport.x, viewport.width,
+    eye.x, scaleX, offsetX, viewport.x, viewport.width,
   );
   const right = toPixels(
     REAR_VIEW.centerX + REAR_VIEW.width / 2,
-    scaleX, offsetX, viewport.x, viewport.width,
+    eye.x, scaleX, offsetX, viewport.x, viewport.width,
   );
   const bottom = toPixels(
     REAR_VIEW.centerY - REAR_VIEW.height / 2,
-    scaleY, offsetY, viewport.y, viewport.height,
+    eye.y, scaleY, offsetY, viewport.y, viewport.height,
   );
   const top = toPixels(
     REAR_VIEW.centerY + REAR_VIEW.height / 2,
-    scaleY, offsetY, viewport.y, viewport.height,
+    eye.y, scaleY, offsetY, viewport.y, viewport.height,
   );
 
   // Clamped so a narrow headset field of view shrinks the window rather than
@@ -385,7 +399,7 @@ class PanoramaView {
     gl.enable(gl.SCISSOR_TEST);
     for (const view of pose.views) {
       const viewport = layer.getViewport(view);
-      const rect = rearViewportRect(view, viewport);
+      const rect = rearViewportRect(view, viewport, eyeOffset(pose, view));
       if (!rect) {
         continue;
       }

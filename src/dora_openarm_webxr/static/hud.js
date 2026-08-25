@@ -35,11 +35,17 @@ void main() {
 // equal angle off the reticle, leaving the middle band clear for the work and
 // the flanks clear for the wrist cameras. Exported so the preview harness can
 // lay the panels out from the same numbers the headset uses.
+// Every head-locked element sits on this one plane — the panels here, the
+// reticle below, the wrist cameras, and the rear-view window in panorama.js.
+// Mixed distances make the eyes reverge between neighbours, which reads as the
+// HUD coming apart into layers rather than being one surface.
+export const PANEL_DISTANCE = 1.2;
+
 export const PANELS = [
   {
     id: "timer",
     canvas: { width: 320, height: 112 },
-    distance: 1.2,
+    distance: PANEL_DISTANCE,
     width: 0.25,
     centerX: 0,
     centerY: 0.45,
@@ -52,13 +58,13 @@ export const PANELS = [
     // is the pair's shared center line and must match REAR_VIEW's.
     id: "robot",
     canvas: { width: 240, height: 340 },
-    distance: 1.2,
+    distance: PANEL_DISTANCE,
     width: 0.26,
     centerX: 0,
     centerY: -0.7,
   },
 ];
-const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };
+const RETICLE = { defaultDistance: PANEL_DISTANCE, angularSize: 0.012 };
 
 // The figure rides lower than the lifter's travel alone would put it, so the
 // arms have somewhere to go when they swing up: at full lift with a shoulder
