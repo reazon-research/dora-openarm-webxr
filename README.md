@@ -279,28 +279,29 @@ panel shows `TORSO`, matching that node's startup default.
 
 ### Rear-view window
 
-The THETA panorama already holds the whole sphere as one texture, so the view
-behind the robot costs no extra bandwidth and no camera motion: it is the same
-image sampled half a turn around. A small window in the upper left of each eye
-shows it, framed so it reads as a window rather than a hole in the panorama.
+The panorama already holds the whole sphere as one texture, so the view behind
+costs no extra bandwidth and no camera motion: it is the same image sampled
+half a turn around. It is drawn as a framed window beside the robot panel at
+the foot of the view, sharing its height and its center line.
 
-It sits beside the robot panel at the foot of the view, sharing its center
-line and its height, and the two are centered as a pair rather than
-individually. Both are placed in viewer-space meters, so a change to one has
-to be matched in the other.
+It behaves like a mirror bolted to the robot rather than a second camera. It
+does not follow the head, so it shows the same thing however the operator
+looks around, and it is flipped left to right, so something behind and to the
+left appears on the left while reversing. It is aimed below the horizon, at
+the floor the base is about to back over.
 
-It is held level with the robot rather than following the head, the way a
-mirror bolted to a vehicle shows the same thing however the driver turns, and
-it is flipped left to right like that mirror, so something behind and to the
-left appears on the left while backing the base up. Its field of view is
-narrower than the headset's, making it a zoomed look behind rather than the
-whole rear hemisphere squeezed into a corner. Position, size, field of view
-and framing are the `REAR_VIEW` constants in `static/panorama.js`; the robot
-panel it aligns with is in `PANELS` in `static/hud.js`.
+Set how wide a slice it shows and how far down it looks in the view
+configuration's `theta360` section, beside the yaw offset:
 
-The window is part of the panorama, so it appears only in the `theta360` view
-and only in WebXR; the desktop monitor shows the flat equirectangular preview,
-which already contains the rear of the scene at its edges.
+```yaml
+theta360:
+  rear_view_field_of_view_deg: 120
+  rear_view_pitch_down_deg: 50
+```
+
+Both fall back to the defaults in `static/panorama.js`, which also holds the
+window's position, size and framing. The window is part of the panorama, so it
+appears only in the `theta360` view and only in WebXR.
 
 ## Desktop monitor
 

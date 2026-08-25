@@ -67,6 +67,11 @@ export const REAR_VIEW = {
   height: 0.3683,
   // Narrower than the headset's own field of view, so the window is a zoomed
   // look behind rather than the whole rear hemisphere squeezed into a corner.
+  // Defaults only. Both are meant to be tuned per robot and per task, so the
+  // view configuration file owns them: set `rear_view_field_of_view_deg` and
+  // `rear_view_pitch_down_deg` in its `theta360` section, beside the yaw
+  // offset. A value outside its range falls back to the default here rather
+  // than producing a projection that cannot exist.
   fieldOfViewDegrees: 120,
   pitchDownDegrees: 50,
   borderPixels: 3,
@@ -285,8 +290,27 @@ class PanoramaView {
     this.#renderRearView(pose, layer, yawOffset);
   }
 
+  #rearSetting(key, fallback, lowest, highest) {
+    const value = this.#configuration.theta360?.[key];
+    return Number.isFinite(value) && value >= lowest && value <= highest
+      ? value
+      : fallback;
+  }
+
   #renderRearView(pose, layer, yawOffset) {
     const gl = this.#gl;
+    const fieldOfView = this.#rearSetting(
+      "rear_view_field_of_view_deg",
+      REAR_VIEW.fieldOfViewDegrees,
+      1,
+      179,
+    );
+    const pitchDown = this.#rearSetting(
+      "rear_view_pitch_down_deg",
+      REAR_VIEW.pitchDownDegrees,
+      -90,
+      90,
+    );
     // Half a turn in texture space is exactly the view behind, so the window
     // reuses the panorama shader untouched — same program, same texture, three
     // uniforms different.
@@ -297,7 +321,7 @@ class PanoramaView {
     // contents as the operator looked around would make it useless for judging
     // what is behind while backing up. The only rotation is the fixed downward
     // tilt, about x, which is negative because a positive turn about x aims up.
-    const halfPitch = (-REAR_VIEW.pitchDownDegrees * Math.PI) / 360;
+    const halfPitch = (-pitchDown * Math.PI) / 360;
     gl.uniform4f(
       this.#uniforms.u_orientation,
       Math.sin(halfPitch),
@@ -306,7 +330,7 @@ class PanoramaView {
       Math.cos(halfPitch),
     );
 
-    const halfFov = (REAR_VIEW.fieldOfViewDegrees * Math.PI) / 360;
+    const halfFov = (fieldOfView * Math.PI) / 360;
     const scale = 1 / Math.tan(halfFov);
     const border = REAR_VIEW.borderPixels;
     gl.enable(gl.SCISSOR_TEST);
