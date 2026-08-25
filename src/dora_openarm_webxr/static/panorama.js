@@ -48,6 +48,26 @@ void main() {
 }
 `;
 
+// A rear-view window in the upper left of each eye, clear of the timer above
+// the center and of the wrist cameras out at eye level. Fractions of the eye's
+// viewport, measured from its top left.
+//
+// The whole sphere is already resident as a texture, so looking behind costs
+// no bandwidth and no robot motion: it is the same image sampled half a turn
+// around. That is the one thing a panorama can do that a steerable camera
+// cannot, and it is why this is a few uniforms rather than a second downlink.
+const REAR_VIEW = {
+  left: 0.045,
+  top: 0.05,
+  width: 0.26,
+  height: 0.2,
+  // Narrower than the headset's own field of view, so the window is a zoomed
+  // look behind rather than the whole rear hemisphere squeezed into a corner.
+  fieldOfViewDegrees: 70,
+  borderPixels: 3,
+  borderColor: [0.35, 0.65, 1.0, 1.0],
+};
+
 function compile(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
@@ -187,10 +207,9 @@ class PanoramaView {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.#texture);
     gl.uniform1i(this.#uniforms.u_texture, 0);
-    gl.uniform1f(
-      this.#uniforms.u_yaw_offset,
-      (this.#configuration.theta360?.yaw_offset_deg || 0) / 360.0,
-    );
+    const yawOffset =
+      (this.#configuration.theta360?.yaw_offset_deg || 0) / 360.0;
+    gl.uniform1f(this.#uniforms.u_yaw_offset, yawOffset);
 
     for (const view of pose.views) {
       const viewport = layer.getViewport(view);
@@ -215,6 +234,53 @@ class PanoramaView {
       );
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
+
+    this.#renderRearView(pose, layer, yawOffset);
+  }
+
+  #renderRearView(pose, layer, yawOffset) {
+    const gl = this.#gl;
+    // Half a turn in texture space is exactly the view behind, so the window
+    // reuses the panorama shader untouched — same program, same texture, three
+    // uniforms different.
+    gl.uniform1f(this.#uniforms.u_yaw_offset, yawOffset + 0.5);
+    gl.uniform2f(this.#uniforms.u_projection_offset, 0, 0);
+    // Held level with the robot instead of following the head. A mirror bolted
+    // to a vehicle shows the same thing however the driver turns; sliding its
+    // contents as the operator looked around would make it useless for judging
+    // what is behind while backing up.
+    gl.uniform4f(this.#uniforms.u_orientation, 0, 0, 0, 1);
+
+    const halfFov = (REAR_VIEW.fieldOfViewDegrees * Math.PI) / 360;
+    const scale = 1 / Math.tan(halfFov);
+    const border = REAR_VIEW.borderPixels;
+    gl.enable(gl.SCISSOR_TEST);
+    for (const view of pose.views) {
+      const viewport = layer.getViewport(view);
+      const width = Math.round(viewport.width * REAR_VIEW.width);
+      const height = Math.round(viewport.height * REAR_VIEW.height);
+      const x = viewport.x + Math.round(viewport.width * REAR_VIEW.left);
+      // GL measures y up from the bottom; the window is placed from the top.
+      const y =
+        viewport.y +
+        viewport.height -
+        Math.round(viewport.height * REAR_VIEW.top) -
+        height;
+
+      // The frame is a scissored clear, which needs no second program.
+      gl.scissor(x - border, y - border, width + border * 2, height + border * 2);
+      gl.clearColor(...REAR_VIEW.borderColor);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      gl.scissor(x, y, width, height);
+      gl.viewport(x, y, width, height);
+      // Negative x flips the ray, so the window reads like a car's rear-view
+      // mirror: something behind and to the left shows on the left, which is
+      // what the operator needs when steering the base backward.
+      gl.uniform2f(this.#uniforms.u_projection_scale, -scale, (scale * width) / height);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    gl.disable(gl.SCISSOR_TEST);
   }
 
   close() {
