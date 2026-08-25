@@ -18,7 +18,12 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 LIFTER_HEIGHT_INPUT = "waist_height"
 WAIST_ANGLE_INPUT = "waist_angle"
 BASE_ENGAGED_INPUT = "base_engaged"
+BASE_POSE_INPUT = "base_pose"
 HUD_UPDATE_INTERVAL = 1.0 / 30.0
+
+# `base_pose` is an odometry triple [x_m, y_m, theta_rad]. The panel draws a
+# heading, not a position, so only the third element is read.
+BASE_POSE_HEADING_INDEX = 2
 
 # `base_engaged` arrives as 0.0 or 1.0; anything at or above this reads as the
 # base owning the sticks. Matches the swerve lock that publishes it.
@@ -72,6 +77,8 @@ _waist_angle: float | None = None
 _waist_angle_sequence = 0
 _base_engaged: bool | None = None
 _base_engaged_sequence = 0
+_base_heading: float | None = None
+_base_heading_sequence = 0
 _state_event = asyncio.Event()
 
 
@@ -128,17 +135,20 @@ def handle_event(event) -> bool:
         LIFTER_HEIGHT_INPUT,
         WAIST_ANGLE_INPUT,
         BASE_ENGAGED_INPUT,
+        BASE_POSE_INPUT,
     ):
         return False
 
+    index = BASE_POSE_HEADING_INDEX if event["id"] == BASE_POSE_INPUT else 0
     try:
-        value = float(event["value"][0].as_py())
+        value = float(event["value"][index].as_py())
     except (IndexError, TypeError, ValueError):
         return True
     if not math.isfinite(value):
         return True
 
     global _base_engaged, _base_engaged_sequence
+    global _base_heading, _base_heading_sequence
     global _waist_angle, _waist_angle_sequence, _waist_height, _waist_sequence
     if event["id"] == LIFTER_HEIGHT_INPUT:
         scaled = value / _waist_height_full_scale * WAIST_HEIGHT_MAX
@@ -148,6 +158,12 @@ def handle_event(event) -> bool:
         scaled = value / _waist_angle_full_scale * WAIST_ANGLE_MAX_DEGREES
         _waist_angle = min(WAIST_ANGLE_MAX_DEGREES, max(0.0, scaled))
         _waist_angle_sequence += 1
+    elif event["id"] == BASE_POSE_INPUT:
+        # Deliberately unclamped, unlike the two above. Heading wraps, and the
+        # odometry that publishes it never normalizes its integral, so every
+        # finite reading is a real one and a limit would only invent a stop.
+        _base_heading = value
+        _base_heading_sequence += 1
     else:
         # The publisher sends this only on the grip edge, so a repeat of the
         # value it already holds is not a change worth waking the socket for.
@@ -178,6 +194,7 @@ def register_routes(app: FastAPI, should_exit) -> None:
         await websocket.accept()
         waist_sent = -1
         waist_angle_sent = -1
+        heading_sent = -1
         mode_sent = -1
         timer_sent = -1
         last_sent_at = 0.0
@@ -190,6 +207,9 @@ def register_routes(app: FastAPI, should_exit) -> None:
                 ) or (
                     _waist_angle is not None
                     and _waist_angle_sequence != waist_angle_sent
+                ) or (
+                    _base_heading is not None
+                    and _base_heading_sequence != heading_sent
                 )
                 if pose_changed:
                     delay = HUD_UPDATE_INTERVAL - (loop.time() - last_sent_at)
@@ -207,6 +227,14 @@ def register_routes(app: FastAPI, should_exit) -> None:
                         waist_angle_sent = _waist_angle_sequence
                         await websocket.send_json(
                             {"type": "waist-angle", "value": _waist_angle}
+                        )
+                    if (
+                        _base_heading is not None
+                        and _base_heading_sequence != heading_sent
+                    ):
+                        heading_sent = _base_heading_sequence
+                        await websocket.send_json(
+                            {"type": "base-heading", "value": _base_heading}
                         )
                     last_sent_at = loop.time()
                     sent = True

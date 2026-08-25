@@ -223,7 +223,7 @@ button.selected {
 }
 
 /* Bottom center, mirroring the timer above, as in the headset. */
-.hud .lifter {
+.hud .robot {
   top: auto;
   bottom: 1.25rem;
   left: 50%;
@@ -252,8 +252,7 @@ button.selected {
     width: min(9rem, 36vw);
   }
 
-  .hud .lifter {
-    right: 0.75rem;
+  .hud .robot {
     width: min(6.5rem, 26vw);
   }
 

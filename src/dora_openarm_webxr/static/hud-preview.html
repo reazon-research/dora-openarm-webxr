@@ -89,6 +89,10 @@
         <span id="angle-value">0°</span>
       </label>
       <label>
+        Base heading <input id="heading" type="range" min="-180" max="180" step="1" value="0">
+        <span id="heading-value">0°</span>
+      </label>
+      <label>
         <button id="timer" type="button">Start timer</button>
         <button id="sweep" type="button">Sweep lifter</button>
       </label>
@@ -171,6 +175,13 @@
       angle.addEventListener("input", () => {
         angleValue.textContent = `${angle.value}°`;
         hud.setWaistAngle(Number(angle.value));
+      });
+
+      const heading = document.getElementById("heading");
+      const headingValue = document.getElementById("heading-value");
+      heading.addEventListener("input", () => {
+        headingValue.textContent = `${heading.value}°`;
+        hud.setBaseHeading((Number(heading.value) * Math.PI) / 180);
       });
 
       let running = false;
