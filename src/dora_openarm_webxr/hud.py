@@ -15,12 +15,19 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 LIFTER_HEIGHT_INPUT = "waist_height"
 WAIST_ANGLE_INPUT = "waist_angle"
+BASE_ENGAGED_INPUT = "base_engaged"
 HUD_UPDATE_INTERVAL = 1.0 / 30.0
+
+# `base_engaged` arrives as 0.0 or 1.0; anything at or above this reads as the
+# base owning the sticks. Matches the swerve lock that publishes it.
+BASE_ENGAGED_THRESHOLD = 0.5
 
 _waist_height: float | None = None
 _waist_sequence = 0
 _waist_angle: float | None = None
 _waist_angle_sequence = 0
+_base_engaged: bool | None = None
+_base_engaged_sequence = 0
 _state_event = asyncio.Event()
 
 
@@ -72,10 +79,11 @@ _timer_sequence = 0
 
 
 def handle_event(event) -> bool:
-    """Keep the latest lifter height or waist angle."""
+    """Keep the latest lifter height, waist angle or teleoperation mode."""
     if event["type"] != "INPUT" or event["id"] not in (
         LIFTER_HEIGHT_INPUT,
         WAIST_ANGLE_INPUT,
+        BASE_ENGAGED_INPUT,
     ):
         return False
 
@@ -86,13 +94,22 @@ def handle_event(event) -> bool:
     if not math.isfinite(value):
         return True
 
+    global _base_engaged, _base_engaged_sequence
     global _waist_angle, _waist_angle_sequence, _waist_height, _waist_sequence
     if event["id"] == LIFTER_HEIGHT_INPUT:
         _waist_height = min(1.0, max(0.0, value))
         _waist_sequence += 1
-    else:
+    elif event["id"] == WAIST_ANGLE_INPUT:
         _waist_angle = min(90.0, max(0.0, value))
         _waist_angle_sequence += 1
+    else:
+        # The publisher sends this only on the grip edge, so a repeat of the
+        # value it already holds is not a change worth waking the socket for.
+        engaged = value >= BASE_ENGAGED_THRESHOLD
+        if engaged == _base_engaged:
+            return True
+        _base_engaged = engaged
+        _base_engaged_sequence += 1
     _state_event.set()
     return True
 
@@ -115,6 +132,7 @@ def register_routes(app: FastAPI, should_exit) -> None:
         await websocket.accept()
         waist_sent = -1
         waist_angle_sent = -1
+        mode_sent = -1
         timer_sent = -1
         last_sent_at = 0.0
         loop = asyncio.get_running_loop()
@@ -145,6 +163,17 @@ def register_routes(app: FastAPI, should_exit) -> None:
                             {"type": "waist-angle", "value": _waist_angle}
                         )
                     last_sent_at = loop.time()
+                    sent = True
+                # Not rate limited with the pose above: the mode changes only
+                # on a grip press, and it tells the operator which half of the
+                # robot their sticks are about to move, so it goes out at once.
+                # Sent on connect too, so a headset that reconnects mid-run
+                # shows the current mode instead of the startup default.
+                if _base_engaged is not None and _base_engaged_sequence != mode_sent:
+                    mode_sent = _base_engaged_sequence
+                    await websocket.send_json(
+                        {"type": "mode", "base_engaged": _base_engaged}
+                    )
                     sent = True
                 # Always send an initial timer state. It lets a PC opened after
                 # the Quest session started reconstruct the current clock.
