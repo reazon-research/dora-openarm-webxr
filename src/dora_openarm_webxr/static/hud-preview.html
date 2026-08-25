@@ -40,6 +40,7 @@
       }
       .wrist {
         position: absolute;
+        box-sizing: border-box;
         border: 1px dashed #30363d;
         border-radius: 4px;
         transform: translate(-50%, -50%);
@@ -49,6 +50,9 @@
       }
       .rear {
         position: absolute;
+        /* Border and padding inside the measured box, or the outline renders
+           taller than the geometry it is meant to be showing. */
+        box-sizing: border-box;
         transform: translate(-50%, -50%);
         border: 2px solid #59a6ff;
         border-radius: 3px;

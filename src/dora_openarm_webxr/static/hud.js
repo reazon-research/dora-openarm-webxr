@@ -54,7 +54,7 @@ export const PANELS = [
     canvas: { width: 240, height: 340 },
     distance: 1.2,
     width: 0.26,
-    centerX: -0.2606,
+    centerX: -0.31,
     centerY: -0.7,
   },
 ];

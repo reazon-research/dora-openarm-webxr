@@ -51,20 +51,21 @@ void main() {
 // A rear-view window beside the robot panel at the foot of the view. Placed in
 // viewer-space meters, like the HUD panels, rather than as a fraction of the
 // display: the two sit shoulder to shoulder and have to keep agreeing on a
-// height and a baseline, which they cannot do in different coordinate systems.
-// Keep `centerY`, `height` and the robot panel's own in step — panorama-align
-// in the checks asserts they still match.
+// baseline, which they cannot do in different coordinate systems. The window
+// is shorter than the panel and centered against it, so keep `centerY` in step
+// with the panel's own, and `centerX` in step with the width of both, or the
+// pair stops sitting centered in the view.
 //
 // The whole sphere is already resident as a texture, so looking behind costs
 // no bandwidth and no robot motion: it is the same image sampled half a turn
 // around. That is the one thing a panorama can do that a steerable camera
 // cannot, and it is why this is a few uniforms rather than a second downlink.
 export const REAR_VIEW = {
-  centerX: 0.145,
+  centerX: 0.16,
   centerY: -0.7,
   distance: 1.2,
-  width: 0.4911,
-  height: 0.3683,
+  width: 0.56,
+  height: 0.3131,
   // Narrower than the headset's own field of view, so the window is a zoomed
   // look behind rather than the whole rear hemisphere squeezed into a corner.
   // Defaults only. Both are meant to be tuned per robot and per task, so the
