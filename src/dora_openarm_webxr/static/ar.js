@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { createHudPanel } from "./hud.js";
+import { createHudPanel, PANELS } from "./hud.js";
 import { createInstructionPanel } from "./instructions.js";
 import { createCameraPanel } from "./panel.js";
-import { createPanoramaView } from "./panorama.js";
+import { createPanoramaView, layoutRearView } from "./panorama.js";
 import { createStereoPanel } from "./stereo.js";
 import { createWristPanels } from "./wrist.js";
 
@@ -57,6 +57,13 @@ if (navigator.xr) {
       // one per eye, and "none" shows no camera at all. Where they hang
       // is a separate question, answered by "panel: lock" below.
       if (configuration.view === "theta360") {
+        // Sizes the rear-view window from the configuration and shifts the
+        // robot panel to match, so the two stay centered as a pair. Done here
+        // rather than in either module because it takes both to work out.
+        layoutRearView(
+          configuration,
+          PANELS.find(({ id }) => id === "robot"),
+        );
         cameraPanel = createPanoramaView(configuration);
       } else if (configuration.view === "stereo") {
         cameraPanel = createStereoPanel(configuration);

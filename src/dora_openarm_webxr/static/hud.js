@@ -45,16 +45,16 @@ export const PANELS = [
     centerY: 0.45,
   },
   {
-    // Shifted off center to make room for the rear-view window on its right.
-    // The two are one unit at the foot of the view, sharing a center line and
-    // a height, and centered as a pair rather than individually — so this
-    // number, `centerY` and the panel's height all have to move together with
-    // REAR_VIEW in panorama.js.
+    // One unit with the rear-view window on its right, at the foot of the
+    // view. `centerX` is overwritten by layoutRearView once the window's size
+    // is known, so the pair sits centered however wide the window is; the
+    // value here only stands in for a session without a panorama. `centerY`
+    // is the pair's shared center line and must match REAR_VIEW's.
     id: "robot",
     canvas: { width: 240, height: 340 },
     distance: 1.2,
     width: 0.26,
-    centerX: -0.31,
+    centerX: 0,
     centerY: -0.7,
   },
 ];

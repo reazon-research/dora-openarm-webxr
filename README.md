@@ -245,11 +245,22 @@ configuration's `theta360` section, beside the yaw offset:
 theta360:
   rear_view_field_of_view_deg: 120
   rear_view_pitch_down_deg: 50
+  rear_view_width_m: 0.56
+  rear_view_height_m: 0.3131
+  rear_view_opacity: 0.75
 ```
 
-Both fall back to the defaults in `static/panorama.js`, which also holds the
-window's position, size and framing. The window is part of the panorama, so it
-appears only in the `theta360` view and only in WebXR.
+Below `1`, the opacity lets the scene ahead show through the window, so it
+costs the operator awareness of what is in front rather than taking a bite out
+of it. The frame around it stays solid, so the window's edge reads however
+faint its contents are. The size is in meters at the distance the window
+hangs. The robot panel beside
+it is moved to match, so the two stay centered in the view as a pair whatever
+size the window is given.
+
+Each falls back to the default in `static/panorama.js`, which also holds the
+window's framing and the gap between the two. The window is part of the
+panorama, so it appears only in the `theta360` view and only in WebXR.
 
 ## Desktop monitor
 
