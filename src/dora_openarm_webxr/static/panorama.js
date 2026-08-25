@@ -48,25 +48,71 @@ void main() {
 }
 `;
 
-// A rear-view window in the upper left of each eye, clear of the timer above
-// the center and of the wrist cameras out at eye level. Fractions of the eye's
-// viewport, measured from its top left.
+// A rear-view window beside the robot panel at the foot of the view. Placed in
+// viewer-space meters, like the HUD panels, rather than as a fraction of the
+// display: the two sit shoulder to shoulder and have to keep agreeing on a
+// height and a baseline, which they cannot do in different coordinate systems.
+// Keep `centerY`, `height` and the robot panel's own in step — panorama-align
+// in the checks asserts they still match.
 //
 // The whole sphere is already resident as a texture, so looking behind costs
 // no bandwidth and no robot motion: it is the same image sampled half a turn
 // around. That is the one thing a panorama can do that a steerable camera
 // cannot, and it is why this is a few uniforms rather than a second downlink.
-const REAR_VIEW = {
-  left: 0.045,
-  top: 0.05,
-  width: 0.26,
-  height: 0.2,
+export const REAR_VIEW = {
+  centerX: 0.145,
+  centerY: -0.55,
+  distance: 1.2,
+  width: 0.4911,
+  height: 0.3683,
   // Narrower than the headset's own field of view, so the window is a zoomed
   // look behind rather than the whole rear hemisphere squeezed into a corner.
   fieldOfViewDegrees: 70,
   borderPixels: 3,
   borderColor: [0.35, 0.65, 1.0, 1.0],
 };
+
+// Where the window lands on one eye, from its viewer-space placement. This
+// inverts the ray reconstruction the fragment shader does: that shader turns a
+// pixel into a direction, and this turns a point at `distance` back into
+// pixels, so the window lines up with a HUD panel given the same numbers.
+function rearViewportRect(view, viewport) {
+  const scaleX = view.projectionMatrix[0];
+  const scaleY = view.projectionMatrix[5];
+  const offsetX = view.projectionMatrix[8];
+  const offsetY = view.projectionMatrix[9];
+  const distance = REAR_VIEW.distance;
+  const toPixels = (value, scale, offset, origin, size) =>
+    origin + ((scale * (value / distance) - offset + 1) / 2) * size;
+
+  const left = toPixels(
+    REAR_VIEW.centerX - REAR_VIEW.width / 2,
+    scaleX, offsetX, viewport.x, viewport.width,
+  );
+  const right = toPixels(
+    REAR_VIEW.centerX + REAR_VIEW.width / 2,
+    scaleX, offsetX, viewport.x, viewport.width,
+  );
+  const bottom = toPixels(
+    REAR_VIEW.centerY - REAR_VIEW.height / 2,
+    scaleY, offsetY, viewport.y, viewport.height,
+  );
+  const top = toPixels(
+    REAR_VIEW.centerY + REAR_VIEW.height / 2,
+    scaleY, offsetY, viewport.y, viewport.height,
+  );
+
+  // Clamped so a narrow headset field of view shrinks the window rather than
+  // scissoring outside its own eye and drawing over the other one.
+  const x0 = Math.round(Math.max(left, viewport.x));
+  const x1 = Math.round(Math.min(right, viewport.x + viewport.width));
+  const y0 = Math.round(Math.max(bottom, viewport.y));
+  const y1 = Math.round(Math.min(top, viewport.y + viewport.height));
+  if (x1 - x0 < 1 || y1 - y0 < 1) {
+    return null;
+  }
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
 
 function compile(gl, type, source) {
   const shader = gl.createShader(type);
@@ -257,15 +303,11 @@ class PanoramaView {
     gl.enable(gl.SCISSOR_TEST);
     for (const view of pose.views) {
       const viewport = layer.getViewport(view);
-      const width = Math.round(viewport.width * REAR_VIEW.width);
-      const height = Math.round(viewport.height * REAR_VIEW.height);
-      const x = viewport.x + Math.round(viewport.width * REAR_VIEW.left);
-      // GL measures y up from the bottom; the window is placed from the top.
-      const y =
-        viewport.y +
-        viewport.height -
-        Math.round(viewport.height * REAR_VIEW.top) -
-        height;
+      const rect = rearViewportRect(view, viewport);
+      if (!rect) {
+        continue;
+      }
+      const { x, y, width, height } = rect;
 
       // The frame is a scissored clear, which needs no second program.
       gl.scissor(x - border, y - border, width + border * 2, height + border * 2);

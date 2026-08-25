@@ -232,13 +232,19 @@ behind the robot costs no extra bandwidth and no camera motion: it is the same
 image sampled half a turn around. A small window in the upper left of each eye
 shows it, framed so it reads as a window rather than a hole in the panorama.
 
+It sits beside the robot panel at the foot of the view, sharing its center
+line and its height, and the two are centered as a pair rather than
+individually. Both are placed in viewer-space meters, so a change to one has
+to be matched in the other.
+
 It is held level with the robot rather than following the head, the way a
 mirror bolted to a vehicle shows the same thing however the driver turns, and
 it is flipped left to right like that mirror, so something behind and to the
 left appears on the left while backing the base up. Its field of view is
 narrower than the headset's, making it a zoomed look behind rather than the
 whole rear hemisphere squeezed into a corner. Position, size, field of view
-and framing are the `REAR_VIEW` constants in `static/panorama.js`.
+and framing are the `REAR_VIEW` constants in `static/panorama.js`; the robot
+panel it aligns with is in `PANELS` in `static/hud.js`.
 
 The window is part of the panorama, so it appears only in the `theta360` view
 and only in WebXR; the desktop monitor shows the flat equirectangular preview,

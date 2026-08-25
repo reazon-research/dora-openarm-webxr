@@ -45,12 +45,17 @@ export const PANELS = [
     centerY: 0.45,
   },
   {
+    // Shifted off center to make room for the rear-view window on its right.
+    // The two are one unit at the foot of the view, sharing a center line and
+    // a height, and centered as a pair rather than individually — so this
+    // number, `centerY` and the panel's height all have to move together with
+    // REAR_VIEW in panorama.js.
     id: "robot",
     canvas: { width: 240, height: 340 },
     distance: 1.2,
     width: 0.26,
-    centerX: 0,
-    centerY: -0.4,
+    centerX: -0.2606,
+    centerY: -0.55,
   },
 ];
 const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };

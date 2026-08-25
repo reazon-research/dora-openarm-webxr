@@ -47,6 +47,17 @@
         font-size: 11px;
         text-align: center;
       }
+      .rear {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        border: 2px solid #59a6ff;
+        border-radius: 3px;
+        background: rgba(88, 166, 255, 0.07);
+        color: #8b949e;
+        font-size: 11px;
+        text-align: center;
+        padding-top: 0.35rem;
+      }
       .reticle {
         position: absolute;
         top: 50%; left: 50%;
@@ -107,7 +118,10 @@
     </div>
 
     <p class="note">
-      Panels are placed from their real <code>PANELS</code> geometry, projected
+      The rear-view window is drawn from the real <code>REAR_VIEW</code>
+      placement in <code>panorama.js</code>, in the same viewer-space meters as
+      the panels, so its alignment with the robot panel is the real one. Panels
+      are placed from their real <code>PANELS</code> geometry, projected
       into an assumed 100&deg;&times;90&deg; field of view, so this shows where
       they sit relative to the reticle and to the wrist cameras (dashed, from
       the defaults in <code>wrist.js</code>). Angular sizes are faithful;
@@ -119,6 +133,7 @@
 
     <script type="module">
       import { createHudPanel, PANELS } from "./hud.js";
+      import { REAR_VIEW } from "./panorama.js";
 
       // Roughly a Quest 3 per-eye field of view. Panels are positioned in
       // tangent space, which is what the perspective projection does too, so
@@ -144,6 +159,19 @@
         box.textContent = "wrist";
         place(box, { centerX, centerY: 0, distance: WRIST.distance, width: WRIST.width });
         box.style.height = `${view.clientWidth * (WRIST.width / WRIST.distance / (2 * HALF_TAN_X)) * WRIST.aspect}px`;
+        view.append(box);
+      }
+
+      // Placed from the same viewer-space numbers the headset uses, so the
+      // window and the robot panel beside it line up here exactly as there.
+      {
+        const box = document.createElement("div");
+        box.className = "rear";
+        box.textContent = "rear view";
+        place(box, REAR_VIEW);
+        box.style.height = `${
+          view.clientWidth * (REAR_VIEW.height / REAR_VIEW.distance / (2 * HALF_TAN_X))
+        }px`;
         view.append(box);
       }
 

@@ -1,0 +1,174 @@
+<!doctype html>
+<!--
+  Copyright 2026 Enactic, Inc.
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+
+  Development harness. Drives the real PanoramaView against a synthetic
+  equirectangular panorama and a stand-in XR frame, so the rear-view window can
+  be judged without a headset or a THETA. Not linked from the app.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Panorama preview</title>
+    <style>
+      body {
+        margin: 0; padding: 1.5rem; background: #161b22; color: #c9d1d9;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      h1 { font-size: 1rem; margin: 0 0 1rem; }
+      canvas#view { display: block; border-radius: 8px; cursor: grab; max-width: 100%; }
+      canvas#view:active { cursor: grabbing; }
+      .controls { margin-top: 1rem; }
+      label { margin-right: 1.5rem; }
+      code { color: #58a6ff; }
+      p.note { color: #8b949e; max-width: 52rem; }
+      b { color: #c9d1d9; }
+    </style>
+  </head>
+  <body>
+    <h1>Panorama preview — drag to look around</h1>
+    <canvas id="view" width="960" height="600"></canvas>
+    <div class="controls">
+      <label>heading <span id="yaw">0</span>&deg;</label>
+      <label>pitch <span id="pitch">0</span>&deg;</label>
+      <label><button id="reset" type="button">Face front</button></label>
+    </div>
+    <p class="note">
+      The big view is the panorama as the headset renders it; the framed window
+      in the upper left is the rear view. Two things to check by dragging:
+      the window's contents should <b>not move</b> as you look around, because
+      it is held level with the robot; and with the mirror flip,
+      <b>BEHIND-LEFT</b> should sit on the window's <b>left</b>. Turn around to
+      the BACK marker and you will see the same scene un-flipped, which is the
+      comparison. Colors and labels come from a synthetic panorama, not a
+      THETA.
+    </p>
+
+    <script type="module">
+      // The real view takes its frames off a socket. Stubbing the constructor
+      // lets the harness hand it one directly, with no change to the node.
+      const RealWebSocket = window.WebSocket;
+      let socket = null;
+      window.WebSocket = class {
+        constructor() { socket = this; this.handlers = {}; }
+        addEventListener(type, handler) { this.handlers[type] = handler; }
+        close() {}
+      };
+      const { createPanoramaView } = await import("./panorama.js");
+      window.WebSocket = RealWebSocket;
+
+      // ---- a synthetic equirectangular frame -------------------------------
+      // u = 0.5 is forward, 0.75 right, 0.25 left, 0 and 1 behind: the mapping
+      // the fragment shader uses.
+      const src = document.createElement("canvas");
+      src.width = 2048; src.height = 1024;
+      const g = src.getContext("2d");
+      const sky = g.createLinearGradient(0, 0, 0, 512);
+      sky.addColorStop(0, "#0d1117"); sky.addColorStop(1, "#2d3f5c");
+      g.fillStyle = sky; g.fillRect(0, 0, 2048, 512);
+      const ground = g.createLinearGradient(0, 512, 0, 1024);
+      ground.addColorStop(0, "#3a2f22"); ground.addColorStop(1, "#12100c");
+      g.fillStyle = ground; g.fillRect(0, 512, 2048, 512);
+
+      // A stripe every 15 degrees, so rotation is easy to read off.
+      g.strokeStyle = "rgba(255,255,255,0.10)";
+      for (let deg = 0; deg < 360; deg += 15) {
+        const x = (deg / 360) * 2048;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 1024); g.stroke();
+      }
+      g.strokeStyle = "rgba(255,255,255,0.35)";
+      g.beginPath(); g.moveTo(0, 512); g.lineTo(2048, 512); g.stroke();
+
+      const marks = [
+        [0.5, "FRONT", "#7ee787"], [0.75, "RIGHT", "#f0883e"],
+        [0.25, "LEFT", "#58a6ff"], [0.0, "BACK", "#ff7b72"],
+        [1.0, "BACK", "#ff7b72"],
+        // 22.5 degrees either side of straight back, so both fall inside the
+        // rear window's 70 degree field rather than just outside its edges.
+        [0.0625, "BEHIND-LEFT", "#d2a8ff"], [0.9375, "BEHIND-RIGHT", "#ffd866"],
+      ];
+      g.textAlign = "center"; g.textBaseline = "middle";
+      for (const [u, label, color] of marks) {
+        const x = u * 2048;
+        g.strokeStyle = color; g.lineWidth = 6;
+        g.beginPath(); g.moveTo(x, 400); g.lineTo(x, 624); g.stroke();
+        g.fillStyle = color; g.font = "bold 54px system-ui";
+        g.fillText(label, x, 350);
+        g.font = "28px system-ui";
+        const bearing = Math.round(((u - 0.5) * 360 + 360) % 360);
+        g.fillText(`${bearing}° from front`, x, 670);
+      }
+
+      const view = createPanoramaView({
+        view: "theta360",
+        theta360: { yaw_offset_deg: 0 },
+      });
+      const canvas = document.getElementById("view");
+      const gl = canvas.getContext("webgl", { alpha: false });
+      view.attach(gl);
+      src.toBlob(async (blob) => {
+        socket.handlers.message({ data: await blob.arrayBuffer() });
+      }, "image/jpeg", 0.92);
+
+      // ---- a stand-in XR frame ---------------------------------------------
+      const HALF_FOV = (50 * Math.PI) / 180;
+      const scaleX = 1 / Math.tan(HALF_FOV);
+      const projectionMatrix = [
+        scaleX, 0, 0, 0,
+        0, (scaleX * canvas.width) / canvas.height, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+      ];
+      let yaw = 0, pitch = 0;
+      const orientation = { x: 0, y: 0, z: 0, w: 1 };
+      function updateOrientation() {
+        // yaw about Y, then pitch about X, as a quaternion product.
+        const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2);
+        const cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
+        orientation.x = cy * sp;
+        orientation.y = sy * cp;
+        orientation.z = -sy * sp;
+        orientation.w = cy * cp;
+        document.getElementById("yaw").textContent =
+          Math.round((((-yaw * 180) / Math.PI) % 360 + 360) % 360);
+        document.getElementById("pitch").textContent =
+          Math.round((pitch * 180) / Math.PI);
+      }
+      updateOrientation();
+
+      const xrView = { projectionMatrix, transform: { orientation } };
+      const session = { renderState: { baseLayer: {
+        framebuffer: null,
+        getViewport: () => ({ x: 0, y: 0, width: canvas.width, height: canvas.height }),
+      } } };
+      const xrFrame = { getViewerPose: () => ({ views: [xrView] }) };
+
+      function draw() {
+        view.render(session, {}, xrFrame);
+        requestAnimationFrame(draw);
+      }
+      requestAnimationFrame(draw);
+
+      let dragging = false, lastX = 0, lastY = 0;
+      canvas.addEventListener("pointerdown", (e) => {
+        dragging = true; lastX = e.clientX; lastY = e.clientY;
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener("pointerup", () => { dragging = false; });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        yaw -= (e.clientX - lastX) * 0.004;
+        pitch = Math.max(-1.4, Math.min(1.4, pitch - (e.clientY - lastY) * 0.004));
+        lastX = e.clientX; lastY = e.clientY;
+        updateOrientation();
+      });
+      document.getElementById("reset").addEventListener("click", () => {
+        yaw = 0; pitch = 0; updateOrientation();
+      });
+    </script>
+  </body>
+</html>
