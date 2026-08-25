@@ -46,19 +46,26 @@ export const PANELS = [
   },
   {
     id: "robot",
-    canvas: { width: 200, height: 280 },
+    canvas: { width: 240, height: 340 },
     distance: 1.2,
-    width: 0.22,
+    width: 0.26,
     centerX: 0,
     centerY: -0.4,
   },
 ];
 const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };
 
+// The figure rides lower than the lifter's travel alone would put it, so the
+// arms have somewhere to go when they swing up: at full lift with a shoulder
+// near its upper limit, the arm and its letter reach a long way above the hip,
+// and the banner is what they would otherwise run into.
 const LIFTER = {
-  centerX: 100,
-  minHipY: 145,
-  travel: 52,
+  centerX: 120,
+  minHipY: 178,
+  travel: 55,
+  spine: 36, // hip to shoulder
+  neck: 28, // shoulder to the head's center
+  headRadius: 17,
 };
 
 // The base is drawn from above while the body above it is drawn from the
@@ -68,25 +75,63 @@ const LIFTER = {
 // A bare square is symmetric every 90 degrees and could not show a heading at
 // all, so the head circle rides near the front edge and breaks that symmetry.
 const BASE = {
-  centerY: 224,
-  half: 34,
-  headOffset: 22,
-  headRadius: 10,
+  centerY: 246,
+  half: 40,
+  headOffset: 26,
+  headRadius: 12,
 };
 // One panel carries the whole robot rather than three panels taking view
 // space: the swerve base below, the upper body standing on it, and a banner
 // naming which of the two the sticks are driving. Both halves are always
 // drawn, because both are always there — a right-grip press only moves which
 // one the operator is holding. The idle half is grayed, which is literal: the
-// press freezes it where it stood. The banner clears the head at its highest,
-// and the base clears the head at any heading, so nothing ever overlaps.
+// press freezes it where it stood. The banner sits under the base, at the foot
+// of the panel: the figure grows upward as the lifter rises and the arms swing
+// up, so the top is the edge that has to stay clear.
 const IDLE = "#6e7681";
+const IDLE_PALE = "#9198a1";
 const MODE = {
-  bannerHeight: 24,
-  font: "bold 16px monospace",
+  bannerHeight: 28,
+  font: "bold 19px monospace",
   labelColor: "#0d1117",
-  torso: { label: "TORSO", banner: "#58a6ff", torso: "#58a6ff", base: IDLE },
-  drive: { label: "DRIVE", banner: "#f0883e", torso: IDLE, base: "#f0883e" },
+  torso: {
+    label: "TORSO",
+    banner: "#58a6ff",
+    torso: "#58a6ff",
+    armRight: "#58a6ff",
+    armLeft: "#a5d6ff",
+    base: IDLE,
+  },
+  drive: {
+    label: "DRIVE",
+    banner: "#f0883e",
+    torso: IDLE,
+    armRight: IDLE,
+    armLeft: IDLE_PALE,
+    base: "#f0883e",
+  },
+};
+
+// The arms hang off the shoulder inside the waist rotation, so what the panel
+// shows is the shoulder angle against the torso rather than against the room —
+// which is the angle that decides whether a grasp clears the body.
+// A side view puts both arms on the same spot, so a symmetric two-handed pose
+// would hide one stick behind the other and look identical to one arm having
+// gone dead. Two tints drawn semi-transparent keep an exact overlap legible as
+// an overlap: the tints blend rather than one simply winning.
+const ARM = {
+  length: 42,
+  lineWidth: 7,
+  alpha: 0.78,
+  labelOffset: 17,
+  // Nudges the two letters apart so both stay readable when the arms sit at
+  // the same angle, which is exactly when the sticks overlap and the letters
+  // are the only thing telling them apart. Applied square to the stick rather
+  // than across the screen: a screen-horizontal nudge also runs along the arm,
+  // which pushed one letter out to arm's length while dragging the other back
+  // almost onto the tip as soon as the arms swung forward.
+  labelSpread: 7,
+  labelFont: "bold 18px monospace",
 };
 const RESET_HOLD_MILLISECONDS = 1000;
 
@@ -145,6 +190,12 @@ class HudPanel {
   // square-on — the same neutral the operator feels themselves to be in.
   #baseHeading = 0;
   #displayedBaseHeading = 0;
+  // Radians, zero hanging straight down. Both arms start there so an idle
+  // panel reads as a robot at rest rather than one flung out sideways.
+  #armRightJ1 = 0;
+  #armLeftJ1 = 0;
+  #displayedArmRightJ1 = 0;
+  #displayedArmLeftJ1 = 0;
 
   constructor({ clears, reticleDistance }) {
     this.#clears = clears;
@@ -168,6 +219,10 @@ class HudPanel {
           this.setWaistHeight(message.value);
         } else if (message.type === "waist-angle") {
           this.setWaistAngle(message.value);
+        } else if (message.type === "arm-j1-right") {
+          this.setArmJ1("right", message.value);
+        } else if (message.type === "arm-j1-left") {
+          this.setArmJ1("left", message.value);
         } else if (message.type === "base-heading") {
           this.setBaseHeading(message.value);
         } else if (message.type === "mode") {
@@ -301,6 +356,28 @@ class HudPanel {
     }
   }
 
+  setArmJ1(side, radians) {
+    if (!Number.isFinite(radians)) {
+      return;
+    }
+    // Whole degrees only, as for the heading: these arrive on the leader tick
+    // and a redraw the operator cannot see still costs a texture upload.
+    const displayed = Math.round((radians * 180) / Math.PI);
+    if (side === "right") {
+      this.#armRightJ1 = radians;
+      if (displayed !== this.#displayedArmRightJ1) {
+        this.#displayedArmRightJ1 = displayed;
+        this.#stale = true;
+      }
+    } else {
+      this.#armLeftJ1 = radians;
+      if (displayed !== this.#displayedArmLeftJ1) {
+        this.#displayedArmLeftJ1 = displayed;
+        this.#stale = true;
+      }
+    }
+  }
+
   setBaseHeading(radians) {
     if (!Number.isFinite(radians)) {
       return;
@@ -386,15 +463,15 @@ class HudPanel {
     context.restore();
   }
 
-  #drawTorso(context, color) {
+  #drawTorso(context, colors) {
     const hipY = LIFTER.minHipY - this.#waistHeight * LIFTER.travel;
-    const shoulderY = hipY - 24;
-    const headY = hipY - 48;
+    const shoulderY = hipY - LIFTER.spine;
+    const headY = shoulderY - LIFTER.neck;
 
     context.save();
     context.lineCap = "round";
-    context.strokeStyle = color;
-    context.fillStyle = color;
+    context.strokeStyle = colors.torso;
+    context.fillStyle = colors.torso;
     context.lineWidth = 7;
     // From the base's center, which is the axis the square turns about, so
     // the column reads as mounted on the base rather than beside it.
@@ -407,19 +484,55 @@ class HudPanel {
     context.arc(LIFTER.centerX, hipY, 8, 0, Math.PI * 2);
     context.fill();
 
+    const waistRadians = (this.#waistAngle * Math.PI) / 180;
     context.save();
     context.translate(LIFTER.centerX, hipY);
-    context.rotate((this.#waistAngle * Math.PI) / 180);
+    context.rotate(waistRadians);
     context.beginPath();
     context.moveTo(0, 0);
     context.lineTo(0, shoulderY - hipY);
-    context.moveTo(-24, shoulderY - hipY);
-    context.lineTo(24, shoulderY - hipY);
     context.stroke();
     context.lineWidth = 5;
     context.beginPath();
-    context.arc(0, headY - hipY, 14, 0, Math.PI * 2);
+    context.arc(0, headY - hipY, LIFTER.headRadius, 0, Math.PI * 2);
     context.stroke();
+
+    // Zero hangs the arm straight down and a positive angle swings it forward,
+    // matching the waist, which leans forward on a positive angle too.
+    context.lineWidth = ARM.lineWidth;
+    context.font = ARM.labelFont;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    for (const arm of [
+      { angle: this.#armLeftJ1, tint: colors.armLeft, label: "L", nudge: -1 },
+      { angle: this.#armRightJ1, tint: colors.armRight, label: "R", nudge: 1 },
+    ]) {
+      const shoulder = shoulderY - hipY;
+      const unitX = Math.sin(arm.angle);
+      const unitY = Math.cos(arm.angle);
+
+      context.globalAlpha = ARM.alpha;
+      context.strokeStyle = arm.tint;
+      context.beginPath();
+      context.moveTo(0, shoulder);
+      context.lineTo(unitX * ARM.length, shoulder + unitY * ARM.length);
+      context.stroke();
+
+      // Just past the tip, and upright: undoing the waist rotation keeps the
+      // letters readable when the torso folds, and full opacity keeps them
+      // crisp while the sticks themselves stay translucent to overlap well.
+      const spread = arm.nudge * ARM.labelSpread;
+      context.save();
+      context.globalAlpha = 1;
+      context.translate(
+        unitX * (ARM.length + ARM.labelOffset) + unitY * spread,
+        shoulder + unitY * (ARM.length + ARM.labelOffset) - unitX * spread,
+      );
+      context.rotate(-waistRadians);
+      context.fillStyle = arm.tint;
+      context.fillText(arm.label, 0, 0);
+      context.restore();
+    }
     context.restore();
     context.restore();
   }
@@ -434,19 +547,26 @@ class HudPanel {
     context.fillRect(0, 0, panel.canvas.width, panel.canvas.height);
 
     // Color carries the mode on its own, so it reads in peripheral vision
-    // without the operator having to focus on the label to be sure.
+    // without the operator having to focus on the label to be sure. Under the
+    // base rather than over the head: the figure only ever grows upward, so
+    // this is the one edge it can never reach.
+    const bannerY = panel.canvas.height - MODE.bannerHeight;
     context.fillStyle = mode.banner;
-    context.fillRect(0, 0, panel.canvas.width, MODE.bannerHeight);
+    context.fillRect(0, bannerY, panel.canvas.width, MODE.bannerHeight);
     context.fillStyle = MODE.labelColor;
     context.font = MODE.font;
     context.textAlign = "center";
     context.textBaseline = "middle";
-    context.fillText(mode.label, panel.canvas.width / 2, MODE.bannerHeight / 2);
+    context.fillText(
+      mode.label,
+      panel.canvas.width / 2,
+      bannerY + MODE.bannerHeight / 2,
+    );
 
     // Base first: the column and the hip joint sit on top of it, so drawing
     // the body second keeps that junction readable at every heading.
     this.#drawBase(context, mode.base);
-    this.#drawTorso(context, mode.torso);
+    this.#drawTorso(context, mode);
   }
 
   #draw(now) {

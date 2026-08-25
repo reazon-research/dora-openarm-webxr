@@ -194,10 +194,30 @@ does not normalize its integral. It starts at zero, which is the base's homed
 heading, so a session opens with the square facing the operator's own
 forward.
 
-The panel also indicates which half of the robot the joysticks are driving,
-from the optional `base_engaged` input, a scalar that reads as engaged at or
-above `0.5`. Both halves are always drawn, since both are always there; only
-the coloring moves. A `TORSO` banner draws the body live in blue over a gray
+Two sticks hang from the shoulder for the arms, drawn from the optional
+`arm_right_j1` and `arm_left_j1` inputs. Each is a whole joint vector whose
+first element, the shoulder joint, is the only one read; it is an angle in
+radians, zero hanging straight down and positive swinging forward, the way the
+waist leans on a positive angle too. Like the heading it is not clamped. The
+sticks are drawn inside the waist rotation, so the angle the panel shows is
+the arm against the torso rather than against the room. Arms are often mounted
+mirrored, one side reporting as a lift what the other reports as a drop; set
+`ARM_RIGHT_J1_SCALE` or `ARM_LEFT_J1_SCALE` to `-1` for whichever side is
+inverted, so both swing together. Each defaults to `1`, and a zero or
+unreadable setting is refused on stderr rather than pinning an arm to nothing.
+A side view puts both arms in the same place, so they are drawn in two tints
+at partial transparency: an exact overlap blends instead of hiding one stick,
+which would otherwise look the same as an arm whose input has stopped. Each
+stick is lettered `L` or `R` at its tip in its own color, drawn upright
+through a waist fold and nudged apart horizontally, so the two stay legible
+even when the arms hold the same angle.
+
+A banner under the base names which half of the robot the joysticks are
+driving, from the optional `base_engaged` input, a scalar that reads as engaged
+at or above `0.5`. It sits at the foot of the panel rather than over the head
+because the figure only ever grows upward, as the lifter rises and the arms
+swing up, so the bottom is the one edge it can never reach. Both halves of the
+robot are always drawn, since both are always there; only the coloring moves. A `TORSO` banner draws the body live in blue over a gray
 base, meaning the sticks move the lifter and waist. A `DRIVE` banner draws the
 base live in amber under a gray body, meaning a grip press has handed the
 sticks to the base and frozen the upper body where it stood. The node does not

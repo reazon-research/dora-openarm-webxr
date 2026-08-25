@@ -89,6 +89,14 @@
         <span id="angle-value">0°</span>
       </label>
       <label>
+        Right arm J1 <input id="arm-right" type="range" min="-75" max="178" step="1" value="0">
+        <span id="arm-right-value">0°</span>
+      </label>
+      <label>
+        Left arm J1 <input id="arm-left" type="range" min="-75" max="178" step="1" value="0">
+        <span id="arm-left-value">0°</span>
+      </label>
+      <label>
         Base heading <input id="heading" type="range" min="-180" max="180" step="1" value="0">
         <span id="heading-value">0°</span>
       </label>
@@ -176,6 +184,18 @@
         angleValue.textContent = `${angle.value}°`;
         hud.setWaistAngle(Number(angle.value));
       });
+
+      // Ranges match right joint1 in openarm_ena.yaml. The left slider spans
+      // the same numbers because the dataflow's ARM_LEFT_J1_SCALE has already
+      // flipped that side by the time the panel sees it.
+      for (const side of ["right", "left"]) {
+        const slider = document.getElementById(`arm-${side}`);
+        const readout = document.getElementById(`arm-${side}-value`);
+        slider.addEventListener("input", () => {
+          readout.textContent = `${slider.value}°`;
+          hud.setArmJ1(side, (Number(slider.value) * Math.PI) / 180);
+        });
+      }
 
       const heading = document.getElementById("heading");
       const headingValue = document.getElementById("heading-value");
