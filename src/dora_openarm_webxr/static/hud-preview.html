@@ -141,7 +141,7 @@
     </p>
 
     <script type="module">
-      import { createHudPanel, PANELS } from "./hud.js";
+      import { createHudPanel, PANELS, PANEL_DISTANCE } from "./hud.js";
       import { REAR_VIEW, layoutRearView } from "./panorama.js";
 
       // Roughly a Quest 3 per-eye field of view. Panels are positioned in
@@ -150,8 +150,10 @@
       const HALF_TAN_X = Math.tan((100 / 2) * (Math.PI / 180));
       const HALF_TAN_Y = Math.tan((90 / 2) * (Math.PI / 180));
 
-      // Mirrors DEFAULT_PANEL in wrist.js; drawn only to check for overlap.
-      const WRIST = { distance: 1.0, width: 0.38, aspect: 600 / 960, centers: [-0.55, 0.55] };
+      // Mirrors the wrist panels as the view configuration sets them; drawn
+      // only to check for overlap. They share PANEL_DISTANCE with everything
+      // else, so the whole HUD sits on one plane.
+      const WRIST = { distance: PANEL_DISTANCE, width: 0.55, aspect: 600 / 960, centers: [-0.55, 0.55] };
 
       // The same layout the headset runs, so the pair is centered here for the
       // same reason it is there. Edit the two boxes below to try a size before
