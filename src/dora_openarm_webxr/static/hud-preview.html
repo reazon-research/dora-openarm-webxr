@@ -92,6 +92,11 @@
 
     <div class="controls">
       <label>
+        Rear window
+        <input id="rear-w" type="number" step="0.02" min="0.05" max="2" value="0.56"> m wide
+        <input id="rear-h" type="number" step="0.02" min="0.05" max="2" value="0.3131"> m tall
+      </label>
+      <label>
         <button id="mode" type="button">Press right grip</button>
         <span id="mode-state">mode: TORSO (upper body owns the sticks)</span>
       </label>
@@ -137,7 +142,7 @@
 
     <script type="module">
       import { createHudPanel, PANELS } from "./hud.js";
-      import { REAR_VIEW } from "./panorama.js";
+      import { REAR_VIEW, layoutRearView } from "./panorama.js";
 
       // Roughly a Quest 3 per-eye field of view. Panels are positioned in
       // tangent space, which is what the perspective projection does too, so
@@ -147,6 +152,15 @@
 
       // Mirrors DEFAULT_PANEL in wrist.js; drawn only to check for overlap.
       const WRIST = { distance: 1.0, width: 0.38, aspect: 600 / 960, centers: [-0.55, 0.55] };
+
+      // The same layout the headset runs, so the pair is centered here for the
+      // same reason it is there. Edit the two boxes below to try a size before
+      // committing it to the view configuration file.
+      const robotPanel = PANELS.find(({ id }) => id === "robot");
+      function relayout(overrides = {}) {
+        layoutRearView({ theta360: overrides }, robotPanel);
+      }
+      relayout();
 
       const view = document.getElementById("view");
       view.style.height = `${view.clientWidth * (HALF_TAN_Y / HALF_TAN_X)}px`;
@@ -168,16 +182,14 @@
 
       // Placed from the same viewer-space numbers the headset uses, so the
       // window and the robot panel beside it line up here exactly as there.
-      {
-        const box = document.createElement("div");
-        box.className = "rear";
-        box.textContent = "rear view";
-        place(box, REAR_VIEW);
-        box.style.height = `${
-          view.clientWidth * (REAR_VIEW.height / REAR_VIEW.distance / (2 * HALF_TAN_X))
-        }px`;
-        view.append(box);
-      }
+      const rearBox = document.createElement("div");
+      rearBox.className = "rear";
+      rearBox.textContent = "rear view";
+      place(rearBox, REAR_VIEW);
+      rearBox.style.height = `${
+        view.clientWidth * (REAR_VIEW.height / REAR_VIEW.distance / (2 * HALF_TAN_X))
+      }px`;
+      view.append(rearBox);
 
       const hud = createHudPanel({ clears: false });
       for (const canvas of hud.canvases) {
@@ -190,6 +202,24 @@
         requestAnimationFrame(render);
       }
       requestAnimationFrame(render);
+
+      // Re-run the real layout and move every box to where it puts them.
+      function resize() {
+        relayout({
+          rear_view_width_m: Number(document.getElementById("rear-w").value),
+          rear_view_height_m: Number(document.getElementById("rear-h").value),
+        });
+        place(rearBox, REAR_VIEW);
+        rearBox.style.height = `${
+          view.clientWidth * (REAR_VIEW.height / REAR_VIEW.distance / (2 * HALF_TAN_X))
+        }px`;
+        for (const canvas of hud.canvases) {
+          place(canvas, PANELS.find(({ id }) => id === canvas.className));
+        }
+      }
+      for (const id of ["rear-w", "rear-h"]) {
+        document.getElementById(id).addEventListener("input", resize);
+      }
 
       let engaged = false;
       const modeState = document.getElementById("mode-state");

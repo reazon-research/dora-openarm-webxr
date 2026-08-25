@@ -22,6 +22,7 @@ uniform vec2 u_projection_scale;
 uniform vec2 u_projection_offset;
 uniform vec4 u_orientation;
 uniform float u_yaw_offset;
+uniform float u_opacity;
 varying vec2 v_ndc;
 
 vec3 rotateByQuaternion(vec3 point, vec4 quaternion) {
@@ -44,7 +45,7 @@ void main() {
     fract(0.5 + longitude / 6.28318530718 + u_yaw_offset),
     0.5 - latitude / 3.14159265359
   );
-  gl_FragColor = texture2D(u_texture, uv);
+  gl_FragColor = vec4(texture2D(u_texture, uv).rgb, u_opacity);
 }
 `;
 
@@ -61,11 +62,16 @@ void main() {
 // around. That is the one thing a panorama can do that a steerable camera
 // cannot, and it is why this is a few uniforms rather than a second downlink.
 export const REAR_VIEW = {
-  centerX: 0.16,
+  // centerX is computed by layoutRearView, never set by hand: it depends on
+  // how wide the window and the panel beside it are, and the two have to stay
+  // centered in the view as a pair.
+  centerX: 0,
   centerY: -0.7,
   distance: 1.2,
   width: 0.56,
   height: 0.3131,
+  // Between the window and the panel.
+  gap: 0.06,
   // Narrower than the headset's own field of view, so the window is a zoomed
   // look behind rather than the whole rear hemisphere squeezed into a corner.
   // Defaults only. Both are meant to be tuned per robot and per task, so the
@@ -74,6 +80,11 @@ export const REAR_VIEW = {
   // offset. A value outside its range falls back to the default here rather
   // than producing a projection that cannot exist.
   fieldOfViewDegrees: 120,
+  // How solid the window is over the view it covers. Below 1 the scene in
+  // front shows through it, so the window costs the operator awareness of what
+  // is ahead rather than taking a bite out of it. Its frame stays solid, so
+  // the edge is still readable however faint the contents are.
+  opacity: 0.75,
   pitchDownDegrees: 50,
   borderPixels: 3,
   borderColor: [0.35, 0.65, 1.0, 1.0],
@@ -119,6 +130,28 @@ function rearViewportRect(view, viewport) {
     return null;
   }
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+// Size the window from the view configuration and place it beside the robot
+// panel, moving the panel too so the two stay centered in the view as a pair.
+// Called once at session setup, by whoever owns both — the window cannot do it
+// alone, since it takes the panel's width to know where either of them goes.
+export function layoutRearView(configuration, robotPanel) {
+  const setting = (key, fallback, lowest, highest) => {
+    const value = configuration?.theta360?.[key];
+    return Number.isFinite(value) && value >= lowest && value <= highest
+      ? value
+      : fallback;
+  };
+  REAR_VIEW.width = setting("rear_view_width_m", REAR_VIEW.width, 0.05, 2);
+  REAR_VIEW.height = setting("rear_view_height_m", REAR_VIEW.height, 0.05, 2);
+  if (!robotPanel) {
+    REAR_VIEW.centerX = 0;
+    return;
+  }
+  const group = robotPanel.width + REAR_VIEW.gap + REAR_VIEW.width;
+  robotPanel.centerX = -group / 2 + robotPanel.width / 2;
+  REAR_VIEW.centerX = group / 2 - REAR_VIEW.width / 2;
 }
 
 function compile(gl, type, source) {
@@ -200,6 +233,7 @@ class PanoramaView {
       "u_projection_offset",
       "u_orientation",
       "u_yaw_offset",
+      "u_opacity",
     ]) {
       this.#uniforms[name] = gl.getUniformLocation(program, name);
     }
@@ -263,6 +297,8 @@ class PanoramaView {
     const yawOffset =
       (this.#configuration.theta360?.yaw_offset_deg || 0) / 360.0;
     gl.uniform1f(this.#uniforms.u_yaw_offset, yawOffset);
+    // The panorama itself is the world, never seen through.
+    gl.uniform1f(this.#uniforms.u_opacity, 1);
 
     for (const view of pose.views) {
       const viewport = layer.getViewport(view);
@@ -312,6 +348,12 @@ class PanoramaView {
       -90,
       90,
     );
+    const opacity = this.#rearSetting(
+      "rear_view_opacity",
+      REAR_VIEW.opacity,
+      0.05,
+      1,
+    );
     // Half a turn in texture space is exactly the view behind, so the window
     // reuses the panorama shader untouched — same program, same texture, three
     // uniforms different.
@@ -330,6 +372,12 @@ class PanoramaView {
       0,
       Math.cos(halfPitch),
     );
+    gl.uniform1f(this.#uniforms.u_opacity, opacity);
+    // Blended over the panorama already drawn, which is what the window is
+    // see-through *to*. Turned back off below so the wrist and HUD passes
+    // manage their own blending as they did before.
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     const halfFov = (fieldOfView * Math.PI) / 360;
     const scale = 1 / Math.tan(halfFov);
@@ -343,10 +391,20 @@ class PanoramaView {
       }
       const { x, y, width, height } = rect;
 
-      // The frame is a scissored clear, which needs no second program.
-      gl.scissor(x - border, y - border, width + border * 2, height + border * 2);
+      // The frame is four scissored clears, which need no second program.
+      // Four rather than one covering the lot: a clear cannot blend, so
+      // painting the whole rectangle would put an opaque backing behind the
+      // window and there would be nothing left to see through it to.
       gl.clearColor(...REAR_VIEW.borderColor);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      for (const strip of [
+        [x - border, y - border, border, height + border * 2],
+        [x + width, y - border, border, height + border * 2],
+        [x, y + height, width, border],
+        [x, y - border, width, border],
+      ]) {
+        gl.scissor(...strip);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      }
 
       gl.scissor(x, y, width, height);
       gl.viewport(x, y, width, height);
@@ -357,6 +415,7 @@ class PanoramaView {
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.BLEND);
   }
 
   close() {
