@@ -68,6 +68,7 @@ export const REAR_VIEW = {
   // Narrower than the headset's own field of view, so the window is a zoomed
   // look behind rather than the whole rear hemisphere squeezed into a corner.
   fieldOfViewDegrees: 70,
+  pitchDownDegrees: 20,
   borderPixels: 3,
   borderColor: [0.35, 0.65, 1.0, 1.0],
 };
@@ -291,11 +292,19 @@ class PanoramaView {
     // uniforms different.
     gl.uniform1f(this.#uniforms.u_yaw_offset, yawOffset + 0.5);
     gl.uniform2f(this.#uniforms.u_projection_offset, 0, 0);
-    // Held level with the robot instead of following the head. A mirror bolted
-    // to a vehicle shows the same thing however the driver turns; sliding its
+    // Held against the robot instead of following the head. A mirror bolted to
+    // a vehicle shows the same thing however the driver turns; sliding its
     // contents as the operator looked around would make it useless for judging
-    // what is behind while backing up.
-    gl.uniform4f(this.#uniforms.u_orientation, 0, 0, 0, 1);
+    // what is behind while backing up. The only rotation is the fixed downward
+    // tilt, about x, which is negative because a positive turn about x aims up.
+    const halfPitch = (-REAR_VIEW.pitchDownDegrees * Math.PI) / 360;
+    gl.uniform4f(
+      this.#uniforms.u_orientation,
+      Math.sin(halfPitch),
+      0,
+      0,
+      Math.cos(halfPitch),
+    );
 
     const halfFov = (REAR_VIEW.fieldOfViewDegrees * Math.PI) / 360;
     const scale = 1 / Math.tan(halfFov);
