@@ -25,9 +25,10 @@ void main() {
 const FRAGMENT_SHADER = `
 precision mediump float;
 uniform sampler2D u_texture;
+uniform float u_opacity;
 varying vec2 v_uv;
 void main() {
-  gl_FragColor = texture2D(u_texture, v_uv);
+  gl_FragColor = vec4(texture2D(u_texture, v_uv).rgb, u_opacity);
 }
 `;
 
@@ -41,6 +42,10 @@ const DEFAULT_PANEL = {
   width: 0.38,
   leftCenter: [-0.55, 0.0],
   rightCenter: [0.55, 0.0],
+  // How solid the panels are over the view they cover. Below 1 the scene
+  // behind shows through, so a panel costs awareness of what is around it
+  // rather than taking a bite out of it.
+  opacity: 1.0,
 };
 
 function compile(gl, type, source) {
@@ -136,6 +141,7 @@ class WristPanels {
       "u_center",
       "u_distance",
       "u_texture",
+      "u_opacity",
     ]) {
       this.#uniforms[name] = gl.getUniformLocation(program, name);
     }
@@ -199,7 +205,6 @@ class WristPanels {
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     }
     gl.disable(gl.DEPTH_TEST);
-    gl.disable(gl.BLEND);
 
     this.#upload();
     const distance = finiteNumber(
@@ -207,12 +212,27 @@ class WristPanels {
       DEFAULT_PANEL.distance,
     );
     const width = finiteNumber(this.#configuration.width, DEFAULT_PANEL.width);
+    const configured = finiteNumber(
+      this.#configuration.opacity,
+      DEFAULT_PANEL.opacity,
+    );
+    const opacity = Math.min(1, Math.max(0.05, configured));
+    // Only blended when it would do something. A fully solid panel is drawn
+    // the way it always was, so nothing changes for a view that never asked
+    // for transparency.
+    if (opacity < 1) {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    } else {
+      gl.disable(gl.BLEND);
+    }
 
     gl.useProgram(this.#program);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.#buffer);
     gl.enableVertexAttribArray(this.#corner);
     gl.vertexAttribPointer(this.#corner, 2, gl.FLOAT, false, 0, 0);
     gl.uniform1f(this.#uniforms.u_distance, distance);
+    gl.uniform1f(this.#uniforms.u_opacity, opacity);
     gl.uniform1i(this.#uniforms.u_texture, 0);
     gl.activeTexture(gl.TEXTURE0);
 
@@ -244,6 +264,9 @@ class WristPanels {
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
     }
+    // Handed back off, so the instruction and HUD passes after this one manage
+    // their own blending as they did before.
+    gl.disable(gl.BLEND);
   }
 
   close() {

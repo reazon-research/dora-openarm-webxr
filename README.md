@@ -282,37 +282,29 @@ panel shows `TORSO`, matching that node's startup default.
 The panorama already holds the whole sphere as one texture, so the view behind
 costs no extra bandwidth and no camera motion: it is the same image sampled
 half a turn around. It is drawn as a framed window beside the robot panel at
-the foot of the view, sharing its height and its center line.
+the foot of the view.
 
-It behaves like a mirror bolted to the robot rather than a second camera. It
-does not follow the head, so it shows the same thing however the operator
-looks around, and it is flipped left to right, so something behind and to the
-left appears on the left while reversing. It is aimed below the horizon, at
-the floor the base is about to back over.
+It behaves like a mirror bolted to the robot. It does not follow the head, so
+it shows the same thing however the operator looks around; it is flipped left
+to right, so something behind and to the left appears on the left; and it is
+aimed below the horizon, at the floor the base is about to back over.
 
-Set how wide a slice it shows and how far down it looks in the view
-configuration's `theta360` section, beside the yaw offset:
+Tune it in the view configuration's `theta360` section:
 
 ```yaml
 theta360:
-  rear_view_field_of_view_deg: 120
-  rear_view_pitch_down_deg: 50
-  rear_view_width_m: 0.56
-  rear_view_height_m: 0.3131
-  rear_view_opacity: 0.75
+  rear_view_field_of_view_deg: 120  # horizontal slice of the scene behind
+  rear_view_pitch_down_deg: 50      # how far below the horizon it looks
+  rear_view_width_m: 0.56           # size at the distance it hangs; the robot
+  rear_view_height_m: 0.3131        # panel shifts to keep the pair centered
+  rear_view_opacity: 0.75           # below 1 the view ahead shows through
 ```
 
-Below `1`, the opacity lets the scene ahead show through the window, so it
-costs the operator awareness of what is in front rather than taking a bite out
-of it. The frame around it stays solid, so the window's edge reads however
-faint its contents are. The size is in meters at the distance the window
-hangs. The robot panel beside
-it is moved to match, so the two stay centered in the view as a pair whatever
-size the window is given.
-
-Each falls back to the default in `static/panorama.js`, which also holds the
-window's framing and the gap between the two. The window is part of the
-panorama, so it appears only in the `theta360` view and only in WebXR.
+Each falls back to a default in `static/panorama.js`. The frame stays solid at
+any opacity, so the window's edge reads however faint its contents are. The
+window is part of the panorama, so it appears only in the `theta360` view and
+only in WebXR. `wrist_panels.opacity` does the same for the wrist cameras, and
+defaults to `1`.
 
 ### One head-locked plane
 
