@@ -67,8 +67,8 @@ export const REAR_VIEW = {
   height: 0.3683,
   // Narrower than the headset's own field of view, so the window is a zoomed
   // look behind rather than the whole rear hemisphere squeezed into a corner.
-  fieldOfViewDegrees: 90,
-  pitchDownDegrees: 30,
+  fieldOfViewDegrees: 120,
+  pitchDownDegrees: 50,
   borderPixels: 3,
   borderColor: [0.35, 0.65, 1.0, 1.0],
 };
