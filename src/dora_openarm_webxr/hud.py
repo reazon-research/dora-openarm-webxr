@@ -8,6 +8,8 @@
 import asyncio
 from collections.abc import Callable
 import math
+import os
+import sys
 import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -21,6 +23,48 @@ HUD_UPDATE_INTERVAL = 1.0 / 30.0
 # `base_engaged` arrives as 0.0 or 1.0; anything at or above this reads as the
 # base owning the sticks. Matches the swerve lock that publishes it.
 BASE_ENGAGED_THRESHOLD = 0.5
+
+# The top of each panel's own range: the lifter fully raised, and the waist
+# folded fully forward.
+WAIST_HEIGHT_MAX = 1.0
+WAIST_ANGLE_MAX_DEGREES = 90.0
+
+
+def _full_scale(name, default):
+    """Read the raw input value that should read as the top of a panel's range.
+
+    Sources publish robot units — millimetres of screw travel, or radians on a
+    physical range wider than the logical one the panel draws — and the node
+    stays unaware of any particular robot by taking that full-scale reading
+    from the dataflow instead of hardcoding it. The default is the top of the
+    panel range itself, which is the identity conversion, so a dataflow already
+    publishing `0.0`-`1.0` and `0`-`90` degrees needs neither variable.
+
+    A value that is not positive and finite would divide every reading by zero
+    or smear it to infinity, so it is refused, loudly, in favor of the default.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value <= 0.0:
+        print(
+            f"{name}={raw!r} is not a positive number; "
+            f"falling back on {default}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return default
+    return value
+
+
+_waist_height_full_scale = _full_scale("WAIST_HEIGHT_FULL_SCALE", WAIST_HEIGHT_MAX)
+_waist_angle_full_scale = _full_scale(
+    "WAIST_ANGLE_FULL_SCALE", WAIST_ANGLE_MAX_DEGREES
+)
 
 _waist_height: float | None = None
 _waist_sequence = 0
@@ -97,10 +141,12 @@ def handle_event(event) -> bool:
     global _base_engaged, _base_engaged_sequence
     global _waist_angle, _waist_angle_sequence, _waist_height, _waist_sequence
     if event["id"] == LIFTER_HEIGHT_INPUT:
-        _waist_height = min(1.0, max(0.0, value))
+        scaled = value / _waist_height_full_scale * WAIST_HEIGHT_MAX
+        _waist_height = min(WAIST_HEIGHT_MAX, max(0.0, scaled))
         _waist_sequence += 1
     elif event["id"] == WAIST_ANGLE_INPUT:
-        _waist_angle = min(90.0, max(0.0, value))
+        scaled = value / _waist_angle_full_scale * WAIST_ANGLE_MAX_DEGREES
+        _waist_angle = min(WAIST_ANGLE_MAX_DEGREES, max(0.0, scaled))
         _waist_angle_sequence += 1
     else:
         # The publisher sends this only on the grip edge, so a repeat of the

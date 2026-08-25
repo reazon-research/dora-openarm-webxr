@@ -224,6 +224,19 @@ received, the pose starts at the midpoint value `0.5`. The optional
 `waist_angle` input tilts the upper body from `0` degrees (upright) through
 `90` degrees (forward); it defaults to upright.
 
+Sources often publish robot units rather than the panel's. Set
+`WAIST_HEIGHT_FULL_SCALE` and `WAIST_ANGLE_FULL_SCALE` to the raw input value
+that should read as the top of a panel's range — the lifter fully raised, or
+the waist folded fully forward — and the node scales each reading onto the
+range above. A lifter publishing millimetres over a 504 mm screw takes
+`WAIST_HEIGHT_FULL_SCALE: 504`; a waist publishing radians on a physical
+0-150 degree range takes `WAIST_ANGLE_FULL_SCALE: 2.618`. Both default to the
+top of the panel range itself, which is the identity conversion, so a dataflow
+already publishing normalized values needs neither. A value that is not
+positive and finite is refused with a message on stderr and the default is
+used, rather than dividing every reading by zero. Keeping these in the
+dataflow is what lets the node draw the pose without knowing the robot.
+
 The lifter panel also indicates which half of the robot the joysticks are
 driving, from the optional `base_engaged` Dora input. The input is a scalar
 that reads as engaged at or above `0.5`. A `TORSO` banner and a blue figure
