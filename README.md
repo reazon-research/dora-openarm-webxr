@@ -185,14 +185,25 @@ positive and finite is refused with a message on stderr and the default is
 used, rather than dividing every reading by zero. Keeping these in the
 dataflow is what lets the node draw the pose without knowing the robot.
 
-The lifter panel also indicates which half of the robot the joysticks are
-driving, from the optional `base_engaged` Dora input. The input is a scalar
-that reads as engaged at or above `0.5`. A `TORSO` banner and a blue figure
-mean the sticks move the lifter and waist; a `DRIVE` banner and a gray figure
-mean a grip press has handed them to the base and the upper body is frozen.
-The node does not derive this from the grip button it publishes, so the panel
-always shows the state of whichever node owns the handover. Until an input is
-received the panel shows `TORSO`, matching that node's startup default.
+Below the body the same panel draws the swerve base as a square seen from
+above, with a filled circle at its front edge for the robot's head. The square
+turns with the heading in the optional `base_pose` input, an `[x, y, theta]`
+triple of which only `theta`, in radians, is read. Unlike the poses above it
+is not clamped, because a heading wraps and the odometry that publishes it
+does not normalize its integral. It starts at zero, which is the base's homed
+heading, so a session opens with the square facing the operator's own
+forward.
+
+The panel also indicates which half of the robot the joysticks are driving,
+from the optional `base_engaged` input, a scalar that reads as engaged at or
+above `0.5`. Both halves are always drawn, since both are always there; only
+the coloring moves. A `TORSO` banner draws the body live in blue over a gray
+base, meaning the sticks move the lifter and waist. A `DRIVE` banner draws the
+base live in amber under a gray body, meaning a grip press has handed the
+sticks to the base and frozen the upper body where it stood. The node does not
+derive this from the grip button it publishes, so the panel always shows the
+state of whichever node owns the handover. Until an input is received the
+panel shows `TORSO`, matching that node's startup default.
 
 ## Desktop monitor
 

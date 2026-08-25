@@ -45,34 +45,48 @@ export const PANELS = [
     centerY: 0.45,
   },
   {
-    id: "lifter",
-    canvas: { width: 200, height: 200 },
+    id: "robot",
+    canvas: { width: 200, height: 280 },
     distance: 1.2,
     width: 0.22,
     centerX: 0,
-    centerY: -0.45,
+    centerY: -0.4,
   },
 ];
 const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };
 
 const LIFTER = {
   centerX: 100,
-  groundY: 174,
   minHipY: 145,
   travel: 52,
 };
-// The lifter panel doubles as the mode indicator rather than a third panel
-// taking view space: its stick figure *is* the upper body, and a right-grip
-// press is exactly what freezes that body and hands the sticks to the base.
-// Torso mode draws the figure live; drive mode grays it out, which is honest,
-// because in drive mode the lifter and waist are held where they were.
-// The banner sits above the head at its highest, so it never overlaps.
+
+// The base is drawn from above while the body above it is drawn from the
+// side, so the square can turn on the spot and read as a heading. Its center
+// is the rotation axis, which is also where the lifter column stands, so the
+// column is drawn from there and stays put while the square turns under it.
+// A bare square is symmetric every 90 degrees and could not show a heading at
+// all, so the head circle rides near the front edge and breaks that symmetry.
+const BASE = {
+  centerY: 224,
+  half: 34,
+  headOffset: 22,
+  headRadius: 10,
+};
+// One panel carries the whole robot rather than three panels taking view
+// space: the swerve base below, the upper body standing on it, and a banner
+// naming which of the two the sticks are driving. Both halves are always
+// drawn, because both are always there — a right-grip press only moves which
+// one the operator is holding. The idle half is grayed, which is literal: the
+// press freezes it where it stood. The banner clears the head at its highest,
+// and the base clears the head at any heading, so nothing ever overlaps.
+const IDLE = "#6e7681";
 const MODE = {
   bannerHeight: 24,
   font: "bold 16px monospace",
   labelColor: "#0d1117",
-  torso: { label: "TORSO", banner: "#58a6ff", figure: "#58a6ff" },
-  drive: { label: "DRIVE", banner: "#f0883e", figure: "#6e7681" },
+  torso: { label: "TORSO", banner: "#58a6ff", torso: "#58a6ff", base: IDLE },
+  drive: { label: "DRIVE", banner: "#f0883e", torso: IDLE, base: "#f0883e" },
 };
 const RESET_HOLD_MILLISECONDS = 1000;
 
@@ -126,6 +140,11 @@ class HudPanel {
   // Matches the swerve lock's startup default: the upper body owns the sticks
   // until the first grip press, so the HUD is right before the first message.
   #baseEngaged = false;
+  // Radians. Odometry starts its integral at zero when the dataflow comes up,
+  // which is the base's homed heading, so a fresh session starts the square
+  // square-on — the same neutral the operator feels themselves to be in.
+  #baseHeading = 0;
+  #displayedBaseHeading = 0;
 
   constructor({ clears, reticleDistance }) {
     this.#clears = clears;
@@ -149,6 +168,8 @@ class HudPanel {
           this.setWaistHeight(message.value);
         } else if (message.type === "waist-angle") {
           this.setWaistAngle(message.value);
+        } else if (message.type === "base-heading") {
+          this.setBaseHeading(message.value);
         } else if (message.type === "mode") {
           this.setBaseEngaged(message.base_engaged);
         } else if (message.type === "timer-state") {
@@ -280,6 +301,21 @@ class HudPanel {
     }
   }
 
+  setBaseHeading(radians) {
+    if (!Number.isFinite(radians)) {
+      return;
+    }
+    this.#baseHeading = radians;
+    // Redraw on whole degrees only. Odometry integrates every driver state
+    // message, so the raw value never settles, and redrawing on each one
+    // would re-upload the texture for a turn no one can see.
+    const displayed = Math.round((radians * 180) / Math.PI);
+    if (displayed !== this.#displayedBaseHeading) {
+      this.#displayedBaseHeading = displayed;
+      this.#stale = true;
+    }
+  }
+
   setBaseEngaged(value) {
     const engaged = value === true;
     if (engaged === this.#baseEngaged) {
@@ -331,37 +367,39 @@ class HudPanel {
     return action;
   }
 
-  #drawLifter() {
-    const panel = PANELS.find(({ id }) => id === "lifter");
-    const context = this.#contexts.get("lifter");
-    const mode = this.#baseEngaged ? MODE.drive : MODE.torso;
+  #drawBase(context, color) {
+    context.save();
+    context.translate(LIFTER.centerX, BASE.centerY);
+    // Odometry counts a left turn positive about an upward axis. The canvas
+    // counts a positive angle clockwise, its y axis pointing down, so the
+    // sign flips here to keep a left turn reading as a left turn.
+    context.rotate(-this.#baseHeading);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.strokeStyle = color;
+    context.fillStyle = color;
+    context.lineWidth = 7;
+    context.strokeRect(-BASE.half, -BASE.half, BASE.half * 2, BASE.half * 2);
+    context.beginPath();
+    context.arc(0, -BASE.headOffset, BASE.headRadius, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
+  #drawTorso(context, color) {
     const hipY = LIFTER.minHipY - this.#waistHeight * LIFTER.travel;
     const shoulderY = hipY - 24;
     const headY = hipY - 48;
 
-    context.clearRect(0, 0, panel.canvas.width, panel.canvas.height);
-    context.fillStyle = "rgba(13, 17, 23, 0.78)";
-    context.fillRect(0, 0, panel.canvas.width, panel.canvas.height);
-
-    // Color carries the mode on its own, so it reads in peripheral vision
-    // without the operator having to focus on the label to be sure.
-    context.fillStyle = mode.banner;
-    context.fillRect(0, 0, panel.canvas.width, MODE.bannerHeight);
-    context.fillStyle = MODE.labelColor;
-    context.font = MODE.font;
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillText(mode.label, panel.canvas.width / 2, MODE.bannerHeight / 2);
-
     context.save();
     context.lineCap = "round";
-    context.strokeStyle = mode.figure;
-    context.fillStyle = mode.figure;
+    context.strokeStyle = color;
+    context.fillStyle = color;
     context.lineWidth = 7;
+    // From the base's center, which is the axis the square turns about, so
+    // the column reads as mounted on the base rather than beside it.
     context.beginPath();
-    context.moveTo(LIFTER.centerX - 30, LIFTER.groundY);
-    context.lineTo(LIFTER.centerX + 30, LIFTER.groundY);
-    context.moveTo(LIFTER.centerX, LIFTER.groundY);
+    context.moveTo(LIFTER.centerX, BASE.centerY);
     context.lineTo(LIFTER.centerX, hipY);
     context.stroke();
 
@@ -386,6 +424,31 @@ class HudPanel {
     context.restore();
   }
 
+  #drawRobot() {
+    const panel = PANELS.find(({ id }) => id === "robot");
+    const context = this.#contexts.get("robot");
+    const mode = this.#baseEngaged ? MODE.drive : MODE.torso;
+
+    context.clearRect(0, 0, panel.canvas.width, panel.canvas.height);
+    context.fillStyle = "rgba(13, 17, 23, 0.78)";
+    context.fillRect(0, 0, panel.canvas.width, panel.canvas.height);
+
+    // Color carries the mode on its own, so it reads in peripheral vision
+    // without the operator having to focus on the label to be sure.
+    context.fillStyle = mode.banner;
+    context.fillRect(0, 0, panel.canvas.width, MODE.bannerHeight);
+    context.fillStyle = MODE.labelColor;
+    context.font = MODE.font;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(mode.label, panel.canvas.width / 2, MODE.bannerHeight / 2);
+
+    // Base first: the column and the hip joint sit on top of it, so drawing
+    // the body second keeps that junction readable at every heading.
+    this.#drawBase(context, mode.base);
+    this.#drawTorso(context, mode.torso);
+  }
+
   #draw(now) {
     const panel = PANELS.find(({ id }) => id === "timer");
     const context = this.#contexts.get("timer");
@@ -403,7 +466,7 @@ class HudPanel {
       panel.canvas.height / 2,
     );
 
-    this.#drawLifter();
+    this.#drawRobot();
   }
 
   updateCanvas(now = performance.now()) {
