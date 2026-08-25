@@ -61,7 +61,7 @@ void main() {
 // cannot, and it is why this is a few uniforms rather than a second downlink.
 export const REAR_VIEW = {
   centerX: 0.145,
-  centerY: -0.55,
+  centerY: -0.7,
   distance: 1.2,
   width: 0.4911,
   height: 0.3683,

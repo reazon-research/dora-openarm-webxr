@@ -55,7 +55,7 @@ export const PANELS = [
     distance: 1.2,
     width: 0.26,
     centerX: -0.2606,
-    centerY: -0.55,
+    centerY: -0.7,
   },
 ];
 const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };
