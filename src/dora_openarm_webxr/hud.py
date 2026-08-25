@@ -19,11 +19,17 @@ LIFTER_HEIGHT_INPUT = "waist_height"
 WAIST_ANGLE_INPUT = "waist_angle"
 BASE_ENGAGED_INPUT = "base_engaged"
 BASE_POSE_INPUT = "base_pose"
+ARM_RIGHT_J1_INPUT = "arm_right_j1"
+ARM_LEFT_J1_INPUT = "arm_left_j1"
 HUD_UPDATE_INTERVAL = 1.0 / 30.0
 
 # `base_pose` is an odometry triple [x_m, y_m, theta_rad]. The panel draws a
 # heading, not a position, so only the third element is read.
 BASE_POSE_HEADING_INDEX = 2
+
+# The arm inputs are whole joint vectors. Only the shoulder joint is drawn, and
+# it leads that vector.
+ARM_J1_INDEX = 0
 
 # `base_engaged` arrives as 0.0 or 1.0; anything at or above this reads as the
 # base owning the sticks. Matches the swerve lock that publishes it.
@@ -66,10 +72,39 @@ def _full_scale(name, default):
     return value
 
 
+def _sign_scale(name):
+    """Read a multiplier for an input, defaulting to leaving it alone.
+
+    Separate from `_full_scale` because this one must accept a negative: arms
+    are mounted mirrored, so one side reports a lift the other reports as a
+    drop, and a side view has to undo that to draw both swinging together.
+    Which side is inverted is a fact about the robot, not about this node, so
+    the dataflow says it. Zero is refused for being a way to silently pin an
+    input to nothing rather than a scale anyone means.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return 1.0
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value == 0.0:
+        print(
+            f"{name}={raw!r} is not a non-zero number; falling back on 1.0",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1.0
+    return value
+
+
 _waist_height_full_scale = _full_scale("WAIST_HEIGHT_FULL_SCALE", WAIST_HEIGHT_MAX)
 _waist_angle_full_scale = _full_scale(
     "WAIST_ANGLE_FULL_SCALE", WAIST_ANGLE_MAX_DEGREES
 )
+_arm_right_j1_scale = _sign_scale("ARM_RIGHT_J1_SCALE")
+_arm_left_j1_scale = _sign_scale("ARM_LEFT_J1_SCALE")
 
 _waist_height: float | None = None
 _waist_sequence = 0
@@ -79,6 +114,10 @@ _base_engaged: bool | None = None
 _base_engaged_sequence = 0
 _base_heading: float | None = None
 _base_heading_sequence = 0
+_arm_right_j1: float | None = None
+_arm_right_j1_sequence = 0
+_arm_left_j1: float | None = None
+_arm_left_j1_sequence = 0
 _state_event = asyncio.Event()
 
 
@@ -136,10 +175,17 @@ def handle_event(event) -> bool:
         WAIST_ANGLE_INPUT,
         BASE_ENGAGED_INPUT,
         BASE_POSE_INPUT,
+        ARM_RIGHT_J1_INPUT,
+        ARM_LEFT_J1_INPUT,
     ):
         return False
 
-    index = BASE_POSE_HEADING_INDEX if event["id"] == BASE_POSE_INPUT else 0
+    if event["id"] == BASE_POSE_INPUT:
+        index = BASE_POSE_HEADING_INDEX
+    elif event["id"] in (ARM_RIGHT_J1_INPUT, ARM_LEFT_J1_INPUT):
+        index = ARM_J1_INDEX
+    else:
+        index = 0
     try:
         value = float(event["value"][index].as_py())
     except (IndexError, TypeError, ValueError):
@@ -148,6 +194,8 @@ def handle_event(event) -> bool:
         return True
 
     global _base_engaged, _base_engaged_sequence
+    global _arm_left_j1, _arm_left_j1_sequence
+    global _arm_right_j1, _arm_right_j1_sequence
     global _base_heading, _base_heading_sequence
     global _waist_angle, _waist_angle_sequence, _waist_height, _waist_sequence
     if event["id"] == LIFTER_HEIGHT_INPUT:
@@ -164,6 +212,14 @@ def handle_event(event) -> bool:
         # finite reading is a real one and a limit would only invent a stop.
         _base_heading = value
         _base_heading_sequence += 1
+    elif event["id"] == ARM_RIGHT_J1_INPUT:
+        # Unclamped for the same reason as the heading: a shoulder sweeps most
+        # of a turn, and this node is not the place that knows its limits.
+        _arm_right_j1 = value * _arm_right_j1_scale
+        _arm_right_j1_sequence += 1
+    elif event["id"] == ARM_LEFT_J1_INPUT:
+        _arm_left_j1 = value * _arm_left_j1_scale
+        _arm_left_j1_sequence += 1
     else:
         # The publisher sends this only on the grip edge, so a repeat of the
         # value it already holds is not a change worth waking the socket for.
@@ -186,56 +242,55 @@ def handle_timer_action(action: object) -> bool:
     return True
 
 
+def _pose_stream():
+    """Return every rate-limited pose value as (message type, value, sequence).
+
+    Read through a function rather than captured once, so the socket sees the
+    values as they are after it waits out the frame interval rather than the
+    ones that were current when it decided to wait.
+    """
+    return (
+        ("waist-height", _waist_height, _waist_sequence),
+        ("waist-angle", _waist_angle, _waist_angle_sequence),
+        ("base-heading", _base_heading, _base_heading_sequence),
+        ("arm-j1-right", _arm_right_j1, _arm_right_j1_sequence),
+        ("arm-j1-left", _arm_left_j1, _arm_left_j1_sequence),
+    )
+
+
 def register_routes(app: FastAPI, should_exit) -> None:
     """Register the HUD telemetry WebSocket before the static mount."""
 
     @app.websocket("/hud")
     async def _hud_endpoint(websocket: WebSocket):
         await websocket.accept()
-        waist_sent = -1
-        waist_angle_sent = -1
-        heading_sent = -1
+        pose_sent: dict[str, int] = {}
         mode_sent = -1
         timer_sent = -1
         last_sent_at = 0.0
         loop = asyncio.get_running_loop()
+
+        def stale():
+            """Pose values that have moved since this socket last sent them."""
+            return [
+                (name, value, sequence)
+                for name, value, sequence in _pose_stream()
+                if value is not None and pose_sent.get(name) != sequence
+            ]
+
         try:
             while not should_exit():
                 sent = False
-                pose_changed = (
-                    _waist_height is not None and _waist_sequence != waist_sent
-                ) or (
-                    _waist_angle is not None
-                    and _waist_angle_sequence != waist_angle_sent
-                ) or (
-                    _base_heading is not None
-                    and _base_heading_sequence != heading_sent
-                )
-                if pose_changed:
+                if stale():
                     delay = HUD_UPDATE_INTERVAL - (loop.time() - last_sent_at)
                     if delay > 0:
                         await asyncio.sleep(delay)
-                    if _waist_height is not None and _waist_sequence != waist_sent:
-                        waist_sent = _waist_sequence
-                        await websocket.send_json(
-                            {"type": "waist-height", "value": _waist_height}
-                        )
-                    if (
-                        _waist_angle is not None
-                        and _waist_angle_sequence != waist_angle_sent
-                    ):
-                        waist_angle_sent = _waist_angle_sequence
-                        await websocket.send_json(
-                            {"type": "waist-angle", "value": _waist_angle}
-                        )
-                    if (
-                        _base_heading is not None
-                        and _base_heading_sequence != heading_sent
-                    ):
-                        heading_sent = _base_heading_sequence
-                        await websocket.send_json(
-                            {"type": "base-heading", "value": _base_heading}
-                        )
+                    # Recomputed after the wait: whatever arrived while this
+                    # slept is what the panel should draw, not what was
+                    # pending when it decided to sleep.
+                    for name, value, sequence in stale():
+                        pose_sent[name] = sequence
+                        await websocket.send_json({"type": name, "value": value})
                     last_sent_at = loop.time()
                     sent = True
                 # Not rate limited with the pose above: the mode changes only

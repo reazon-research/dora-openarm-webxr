@@ -227,7 +227,7 @@ button.selected {
   top: auto;
   bottom: 1.25rem;
   left: 50%;
-  width: clamp(8.75rem, 12vw, 12rem);
+  width: clamp(10.4rem, 14.6vw, 14.6rem);
   transform: translateX(-50%);
 }
 
@@ -253,7 +253,7 @@ button.selected {
   }
 
   .hud .robot {
-    width: min(6.5rem, 26vw);
+    width: min(7.7rem, 31vw);
   }
 
   .wrist-video {
