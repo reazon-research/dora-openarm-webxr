@@ -31,8 +31,11 @@ void main() {
 `;
 
 // Values are in viewer-space meters, so both panels follow the headset without
-// reacting to a head turn. Their top edges are aligned across the display.
-const PANELS = [
+// reacting to a head turn. The two sit centered above and below the view, an
+// equal angle off the reticle, leaving the middle band clear for the work and
+// the flanks clear for the wrist cameras. Exported so the preview harness can
+// lay the panels out from the same numbers the headset uses.
+export const PANELS = [
   {
     id: "timer",
     canvas: { width: 320, height: 112 },
@@ -45,9 +48,9 @@ const PANELS = [
     id: "lifter",
     canvas: { width: 200, height: 200 },
     distance: 1.2,
-    width: 0.17,
-    centerX: 0.68,
-    centerY: 0.4,
+    width: 0.22,
+    centerX: 0,
+    centerY: -0.45,
   },
 ];
 const RETICLE = { defaultDistance: 1.0, angularSize: 0.012 };

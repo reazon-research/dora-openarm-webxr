@@ -203,6 +203,7 @@ button.selected {
   z-index: 2;
   top: 5.25rem;
   right: 0;
+  bottom: 0;
   left: 0;
   pointer-events: none;
 }
@@ -221,9 +222,13 @@ button.selected {
   transform: translateX(-50%);
 }
 
+/* Bottom center, mirroring the timer above, as in the headset. */
 .hud .lifter {
-  right: 1.25rem;
-  width: clamp(7rem, 10vw, 10rem);
+  top: auto;
+  bottom: 1.25rem;
+  left: 50%;
+  width: clamp(8.75rem, 12vw, 12rem);
+  transform: translateX(-50%);
 }
 
 @media (max-width: 700px) {

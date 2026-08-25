@@ -5,9 +5,10 @@
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
 
-  Development harness. Drives the real HUD panel through its public setters so
-  the panels can be checked without a robot, a headset or a dora dataflow.
-  Not linked from the app; serve this directory and open the page directly.
+  Development harness. Lays the real HUD panels out from the same PANELS
+  geometry the headset uses and drives them through their public setters, so
+  placement and legibility can be checked without a robot, a headset or a dora
+  dataflow. Not linked from the app; serve this directory and open it directly.
 -->
 <html lang="en">
   <head>
@@ -23,18 +24,38 @@
         font: 14px/1.5 system-ui, sans-serif;
       }
       h1 { font-size: 1rem; margin: 0 0 1rem; }
-      .stage {
-        display: flex;
-        gap: 2rem;
-        align-items: flex-start;
-        flex-wrap: wrap;
-        padding: 1.5rem;
+      #view {
+        position: relative;
+        width: min(90vw, 840px);
         background: #0d1117;
         border: 1px solid #30363d;
         border-radius: 8px;
+        overflow: hidden;
       }
-      #hud { display: flex; gap: 2rem; align-items: flex-start; }
-      #hud canvas { display: block; }
+      #view canvas {
+        position: absolute;
+        height: auto;
+        transform: translate(-50%, -50%);
+        filter: drop-shadow(0 0.65rem 1.4rem rgba(0, 0, 0, 0.5));
+      }
+      .wrist {
+        position: absolute;
+        border: 1px dashed #30363d;
+        border-radius: 4px;
+        transform: translate(-50%, -50%);
+        color: #484f58;
+        font-size: 11px;
+        text-align: center;
+      }
+      .reticle {
+        position: absolute;
+        top: 50%; left: 50%;
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: #7ee787;
+        box-shadow: 0 0 5px rgba(126, 231, 135, .75);
+        transform: translate(-50%, -50%);
+      }
       .controls { margin-top: 1.5rem; }
       label { display: block; margin: .75rem 0; }
       input[type="range"] { width: 18rem; vertical-align: middle; }
@@ -44,14 +65,14 @@
       }
       button:hover { border-color: #8b949e; }
       code { color: #58a6ff; }
-      p.note { color: #8b949e; max-width: 44rem; }
+      p.note { color: #8b949e; max-width: 46rem; }
     </style>
   </head>
   <body>
     <h1>HUD preview — no robot, no headset</h1>
 
-    <div class="stage">
-      <div id="hud"></div>
+    <div id="view">
+      <div class="reticle"></div>
     </div>
 
     <div class="controls">
@@ -74,19 +95,51 @@
     </div>
 
     <p class="note">
-      The lifter panel is a 200&nbsp;px canvas shown at 0.17&nbsp;m wide and
-      1.2&nbsp;m away, which on a Quest 3 works out to roughly 200 device
-      pixels &mdash; so this 1:1 view is a fair check of whether the banner
-      text is readable. Sweep the lifter to its top to confirm the banner
-      still clears the head. A failed <code>wss://</code> connection in the
-      console is expected here: nothing is serving <code>/hud</code>.
+      Panels are placed from their real <code>PANELS</code> geometry, projected
+      into an assumed 100&deg;&times;90&deg; field of view, so this shows where
+      they sit relative to the reticle and to the wrist cameras (dashed, from
+      the defaults in <code>wrist.js</code>). Angular sizes are faithful;
+      whether text is readable also depends on headset resolution, so treat
+      this as a layout check rather than a legibility verdict. A failed
+      <code>wss://</code> connection in the console is expected: nothing is
+      serving <code>/hud</code> here.
     </p>
 
     <script type="module">
-      import { createHudPanel } from "./hud.js";
+      import { createHudPanel, PANELS } from "./hud.js";
+
+      // Roughly a Quest 3 per-eye field of view. Panels are positioned in
+      // tangent space, which is what the perspective projection does too, so
+      // the relative placement holds for any FOV this is set to.
+      const HALF_TAN_X = Math.tan((100 / 2) * (Math.PI / 180));
+      const HALF_TAN_Y = Math.tan((90 / 2) * (Math.PI / 180));
+
+      // Mirrors DEFAULT_PANEL in wrist.js; drawn only to check for overlap.
+      const WRIST = { distance: 1.0, width: 0.38, aspect: 600 / 960, centers: [-0.55, 0.55] };
+
+      const view = document.getElementById("view");
+      view.style.height = `${view.clientWidth * (HALF_TAN_Y / HALF_TAN_X)}px`;
+
+      function place(element, { centerX, centerY, distance, width }) {
+        element.style.left = `${50 * (1 + centerX / distance / HALF_TAN_X)}%`;
+        element.style.top = `${50 * (1 - centerY / distance / HALF_TAN_Y)}%`;
+        element.style.width = `${(100 * width) / distance / (2 * HALF_TAN_X)}%`;
+      }
+
+      for (const centerX of WRIST.centers) {
+        const box = document.createElement("div");
+        box.className = "wrist";
+        box.textContent = "wrist";
+        place(box, { centerX, centerY: 0, distance: WRIST.distance, width: WRIST.width });
+        box.style.height = `${view.clientWidth * (WRIST.width / WRIST.distance / (2 * HALF_TAN_X)) * WRIST.aspect}px`;
+        view.append(box);
+      }
 
       const hud = createHudPanel({ clears: false });
-      document.getElementById("hud").append(...hud.canvases);
+      for (const canvas of hud.canvases) {
+        view.append(canvas);
+        place(canvas, PANELS.find(({ id }) => id === canvas.className));
+      }
 
       function render(now) {
         hud.updateCanvas(now);
