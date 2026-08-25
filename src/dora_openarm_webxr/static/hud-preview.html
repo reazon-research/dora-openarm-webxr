@@ -1,0 +1,149 @@
+<!doctype html>
+<!--
+  Copyright 2026 Enactic, Inc.
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+
+  Development harness. Drives the real HUD panel through its public setters so
+  the panels can be checked without a robot, a headset or a dora dataflow.
+  Not linked from the app; serve this directory and open the page directly.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HUD preview</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 1.5rem;
+        background: #161b22;
+        color: #c9d1d9;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      h1 { font-size: 1rem; margin: 0 0 1rem; }
+      .stage {
+        display: flex;
+        gap: 2rem;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        padding: 1.5rem;
+        background: #0d1117;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+      }
+      #hud { display: flex; gap: 2rem; align-items: flex-start; }
+      #hud canvas { display: block; }
+      .controls { margin-top: 1.5rem; }
+      label { display: block; margin: .75rem 0; }
+      input[type="range"] { width: 18rem; vertical-align: middle; }
+      button {
+        background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+        border-radius: 6px; padding: .4rem .9rem; cursor: pointer; font: inherit;
+      }
+      button:hover { border-color: #8b949e; }
+      code { color: #58a6ff; }
+      p.note { color: #8b949e; max-width: 44rem; }
+    </style>
+  </head>
+  <body>
+    <h1>HUD preview — no robot, no headset</h1>
+
+    <div class="stage">
+      <div id="hud"></div>
+    </div>
+
+    <div class="controls">
+      <label>
+        <button id="mode" type="button">Press right grip</button>
+        <span id="mode-state">mode: TORSO (upper body owns the sticks)</span>
+      </label>
+      <label>
+        Lifter height <input id="height" type="range" min="0" max="1" step="0.01" value="0.5">
+        <span id="height-value">0.50</span>
+      </label>
+      <label>
+        Waist angle <input id="angle" type="range" min="0" max="90" step="1" value="0">
+        <span id="angle-value">0°</span>
+      </label>
+      <label>
+        <button id="timer" type="button">Start timer</button>
+        <button id="sweep" type="button">Sweep lifter</button>
+      </label>
+    </div>
+
+    <p class="note">
+      The lifter panel is a 200&nbsp;px canvas shown at 0.17&nbsp;m wide and
+      1.2&nbsp;m away, which on a Quest 3 works out to roughly 200 device
+      pixels &mdash; so this 1:1 view is a fair check of whether the banner
+      text is readable. Sweep the lifter to its top to confirm the banner
+      still clears the head. A failed <code>wss://</code> connection in the
+      console is expected here: nothing is serving <code>/hud</code>.
+    </p>
+
+    <script type="module">
+      import { createHudPanel } from "./hud.js";
+
+      const hud = createHudPanel({ clears: false });
+      document.getElementById("hud").append(...hud.canvases);
+
+      function render(now) {
+        hud.updateCanvas(now);
+        requestAnimationFrame(render);
+      }
+      requestAnimationFrame(render);
+
+      let engaged = false;
+      const modeState = document.getElementById("mode-state");
+      document.getElementById("mode").addEventListener("click", () => {
+        engaged = !engaged;
+        hud.setBaseEngaged(engaged);
+        modeState.textContent = engaged
+          ? "mode: DRIVE (base owns the sticks, upper body frozen)"
+          : "mode: TORSO (upper body owns the sticks)";
+      });
+
+      const height = document.getElementById("height");
+      const heightValue = document.getElementById("height-value");
+      function setHeight(value) {
+        height.value = value;
+        heightValue.textContent = Number(value).toFixed(2);
+        hud.setWaistHeight(Number(value));
+      }
+      height.addEventListener("input", () => setHeight(height.value));
+
+      const angle = document.getElementById("angle");
+      const angleValue = document.getElementById("angle-value");
+      angle.addEventListener("input", () => {
+        angleValue.textContent = `${angle.value}°`;
+        hud.setWaistAngle(Number(angle.value));
+      });
+
+      let running = false;
+      const timer = document.getElementById("timer");
+      timer.addEventListener("click", () => {
+        running = !running;
+        hud.setTimerState(running, 0);
+        timer.textContent = running ? "Stop timer" : "Start timer";
+      });
+
+      let sweeping = false;
+      const sweep = document.getElementById("sweep");
+      sweep.addEventListener("click", () => {
+        sweeping = !sweeping;
+        sweep.textContent = sweeping ? "Stop sweep" : "Sweep lifter";
+        if (sweeping) {
+          step(performance.now());
+        }
+      });
+      function step(now) {
+        if (!sweeping) {
+          return;
+        }
+        setHeight((Math.sin(now / 1200) + 1) / 2);
+        requestAnimationFrame(step);
+      }
+    </script>
+  </body>
+</html>

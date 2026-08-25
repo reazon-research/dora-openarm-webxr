@@ -58,6 +58,19 @@ const LIFTER = {
   minHipY: 145,
   travel: 52,
 };
+// The lifter panel doubles as the mode indicator rather than a third panel
+// taking view space: its stick figure *is* the upper body, and a right-grip
+// press is exactly what freezes that body and hands the sticks to the base.
+// Torso mode draws the figure live; drive mode grays it out, which is honest,
+// because in drive mode the lifter and waist are held where they were.
+// The banner sits above the head at its highest, so it never overlaps.
+const MODE = {
+  bannerHeight: 24,
+  font: "bold 16px monospace",
+  labelColor: "#0d1117",
+  torso: { label: "TORSO", banner: "#58a6ff", figure: "#58a6ff" },
+  drive: { label: "DRIVE", banner: "#f0883e", figure: "#6e7681" },
+};
 const RESET_HOLD_MILLISECONDS = 1000;
 
 function compile(gl, type, source) {
@@ -107,6 +120,9 @@ class HudPanel {
   #displayedWaistHeight = 50;
   #waistAngle = 0;
   #displayedWaistAngle = 0;
+  // Matches the swerve lock's startup default: the upper body owns the sticks
+  // until the first grip press, so the HUD is right before the first message.
+  #baseEngaged = false;
 
   constructor({ clears, reticleDistance }) {
     this.#clears = clears;
@@ -130,6 +146,8 @@ class HudPanel {
           this.setWaistHeight(message.value);
         } else if (message.type === "waist-angle") {
           this.setWaistAngle(message.value);
+        } else if (message.type === "mode") {
+          this.setBaseEngaged(message.base_engaged);
         } else if (message.type === "timer-state") {
           this.setTimerState(message.running, message.elapsed_milliseconds);
         }
@@ -259,6 +277,15 @@ class HudPanel {
     }
   }
 
+  setBaseEngaged(value) {
+    const engaged = value === true;
+    if (engaged === this.#baseEngaged) {
+      return;
+    }
+    this.#baseEngaged = engaged;
+    this.#stale = true;
+  }
+
   setTimerState(running, elapsedMilliseconds) {
     if (!Number.isFinite(elapsedMilliseconds)) {
       return;
@@ -304,6 +331,7 @@ class HudPanel {
   #drawLifter() {
     const panel = PANELS.find(({ id }) => id === "lifter");
     const context = this.#contexts.get("lifter");
+    const mode = this.#baseEngaged ? MODE.drive : MODE.torso;
     const hipY = LIFTER.minHipY - this.#waistHeight * LIFTER.travel;
     const shoulderY = hipY - 24;
     const headY = hipY - 48;
@@ -312,10 +340,20 @@ class HudPanel {
     context.fillStyle = "rgba(13, 17, 23, 0.78)";
     context.fillRect(0, 0, panel.canvas.width, panel.canvas.height);
 
+    // Color carries the mode on its own, so it reads in peripheral vision
+    // without the operator having to focus on the label to be sure.
+    context.fillStyle = mode.banner;
+    context.fillRect(0, 0, panel.canvas.width, MODE.bannerHeight);
+    context.fillStyle = MODE.labelColor;
+    context.font = MODE.font;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(mode.label, panel.canvas.width / 2, MODE.bannerHeight / 2);
+
     context.save();
     context.lineCap = "round";
-    context.strokeStyle = "#58a6ff";
-    context.fillStyle = "#58a6ff";
+    context.strokeStyle = mode.figure;
+    context.fillStyle = mode.figure;
     context.lineWidth = 7;
     context.beginPath();
     context.moveTo(LIFTER.centerX - 30, LIFTER.groundY);

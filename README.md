@@ -224,6 +224,15 @@ received, the pose starts at the midpoint value `0.5`. The optional
 `waist_angle` input tilts the upper body from `0` degrees (upright) through
 `90` degrees (forward); it defaults to upright.
 
+The lifter panel also indicates which half of the robot the joysticks are
+driving, from the optional `base_engaged` Dora input. The input is a scalar
+that reads as engaged at or above `0.5`. A `TORSO` banner and a blue figure
+mean the sticks move the lifter and waist; a `DRIVE` banner and a gray figure
+mean a grip press has handed them to the base and the upper body is frozen.
+The node does not derive this from the grip button it publishes, so the panel
+always shows the state of whichever node owns the handover. Until an input is
+received the panel shows `TORSO`, matching that node's startup default.
+
 ## Desktop monitor
 
 Open `https://${HOST_NAME}:8443/monitor` on a PC to watch the camera view
