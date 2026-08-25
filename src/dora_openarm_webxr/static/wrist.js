@@ -35,7 +35,9 @@ void main() {
 const SIDES = ["left", "right"];
 const SIDE_BY_PREFIX = { 0: "left", 1: "right" };
 const DEFAULT_PANEL = {
-  distance: 1.0,
+  // Matches PANEL_DISTANCE in hud.js: every head-locked element shares one
+  // plane, so the eyes never reverge moving between them.
+  distance: 1.2,
   width: 0.38,
   leftCenter: [-0.55, 0.0],
   rightCenter: [0.55, 0.0],

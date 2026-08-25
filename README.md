@@ -314,6 +314,14 @@ Each falls back to the default in `static/panorama.js`, which also holds the
 window's framing and the gap between the two. The window is part of the
 panorama, so it appears only in the `theta360` view and only in WebXR.
 
+### One head-locked plane
+
+The timer, the robot panel, the rear-view window, the wrist cameras and the
+reticle all hang at the same distance, `PANEL_DISTANCE` in `static/hud.js`.
+Mixed distances make the eyes reverge moving between neighbours, which reads as
+the HUD coming apart into layers rather than being one surface. The panorama
+itself is the exception, and correctly so: it is a sphere at infinity.
+
 ## Desktop monitor
 
 Open `https://${HOST_NAME}:8443/monitor` on a PC to watch the camera view
