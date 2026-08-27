@@ -48,6 +48,30 @@ const DEFAULT_PANEL = {
   opacity: 1.0,
 };
 
+// The gripper's force, as a strip immediately below each wrist video. Below
+// rather than over it: the bottom of a wrist view is where the fingers and the
+// object are, which is the last part of that image worth covering.
+//
+// Drawn under *both* videos, with the same numbers in each, because one grip
+// sets the force for both arms. The operator reads it beside whichever hand
+// they are already looking at rather than having to look away to the robot
+// panel, which is the point of moving it here.
+//
+// Colour carries the state as the mode banner's does, so a softened gripper is
+// noticeable without reading the text -- going for something heavy in soft mode
+// fails quietly otherwise, and that is worth knowing before the attempt rather
+// than after it slips.
+const CAPTION = {
+  // Wide enough for the longest label the node emits ("SOFT 100%") plus both
+  // numbers, at the font below. The strip's height in the world follows this
+  // aspect ratio, so the text is never stretched.
+  texture: { width: 448, height: 56 },
+  font: "bold 26px monospace",
+  labelColor: "#0d1117",
+  hard: "#8b949e",
+  soft: "#d29922",
+};
+
 function compile(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
@@ -92,6 +116,14 @@ class WristPanels {
   #clears = false;
   #websocket = null;
   #closed = false;
+  // Null until a gripper-mode node publishes. Nothing is drawn until then, so
+  // a dataflow without that node shows the videos exactly as before.
+  #gripperName = null;
+  #gripperSpeed = 0;
+  #gripperTorque = 0;
+  #captionContext = null;
+  #captionTexture = null;
+  #captionStale = false;
 
   constructor(configuration, { clears }) {
     this.#configuration = configuration.wrist_panels || {};
@@ -121,6 +153,63 @@ class WristPanels {
         .catch(() => {});
     });
     this.#websocket = websocket;
+  }
+
+  setGripperMode(name, speedRadS, torqueNm) {
+    if (
+      typeof name !== "string" ||
+      !Number.isFinite(speedRadS) ||
+      !Number.isFinite(torqueNm)
+    ) {
+      return;
+    }
+    if (
+      name === this.#gripperName &&
+      speedRadS === this.#gripperSpeed &&
+      torqueNm === this.#gripperTorque
+    ) {
+      return;
+    }
+    this.#gripperName = name;
+    this.#gripperSpeed = speedRadS;
+    this.#gripperTorque = torqueNm;
+    // Repainted on the next frame rather than here: this arrives on a socket
+    // callback, which is not inside the GL context's frame.
+    this.#captionStale = true;
+  }
+
+  #uploadCaption() {
+    if (!this.#captionStale || this.#gripperName === null) {
+      return;
+    }
+    const gl = this.#gl;
+    const context = this.#captionContext;
+    const { width, height } = CAPTION.texture;
+    // "SOFT", "SOFT 60%" and "MEDIUM" all mean softened; only the default pair
+    // is named HARD, which the node does in every one of its mappings.
+    context.fillStyle =
+      this.#gripperName === "HARD" ? CAPTION.hard : CAPTION.soft;
+    context.fillRect(0, 0, width, height);
+    context.fillStyle = CAPTION.labelColor;
+    context.font = CAPTION.font;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(
+      `${this.#gripperName}  ${this.#gripperTorque.toFixed(2)}Nm  ` +
+        `${Math.round(this.#gripperSpeed)}r/s`,
+      width / 2,
+      height / 2,
+    );
+    gl.bindTexture(gl.TEXTURE_2D, this.#captionTexture);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      this.#captionContext.canvas,
+    );
+    this.#captionStale = false;
   }
 
   attach(gl) {
@@ -163,6 +252,20 @@ class WristPanels {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       this.#textures[side] = texture;
     }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = CAPTION.texture.width;
+    canvas.height = CAPTION.texture.height;
+    this.#captionContext = canvas.getContext("2d");
+    // One canvas and one texture for both strips: the two carry identical text,
+    // because one grip sets the force for both arms.
+    this.#captionTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.#captionTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   }
 
@@ -207,6 +310,7 @@ class WristPanels {
     gl.disable(gl.DEPTH_TEST);
 
     this.#upload();
+    this.#uploadCaption();
     const distance = finiteNumber(
       this.#configuration.distance,
       DEFAULT_PANEL.distance,
@@ -262,6 +366,31 @@ class WristPanels {
         gl.uniform2f(this.#uniforms.u_center, center[0], center[1]);
         gl.bindTexture(gl.TEXTURE_2D, this.#textures[side]);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        if (this.#gripperName !== null) {
+          const captionHalfHeight =
+            (halfWidth * CAPTION.texture.height) / CAPTION.texture.width;
+          gl.uniform2f(
+            this.#uniforms.u_half_extent,
+            halfWidth,
+            captionHalfHeight,
+          );
+          // Flush against the bottom edge of the video above it, so the pair
+          // reads as one unit however the panel is sized or placed.
+          gl.uniform2f(
+            this.#uniforms.u_center,
+            center[0],
+            center[1] - halfHeight - captionHalfHeight,
+          );
+          // Always solid, even where the videos are see-through: this is a
+          // small strip, so it costs almost no awareness of the room, and it
+          // is the one element here whose text has to stay legible over
+          // whatever happens to be behind it.
+          gl.uniform1f(this.#uniforms.u_opacity, 1.0);
+          gl.bindTexture(gl.TEXTURE_2D, this.#captionTexture);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          gl.uniform1f(this.#uniforms.u_opacity, opacity);
+        }
       }
     }
     // Handed back off, so the instruction and HUD passes after this one manage

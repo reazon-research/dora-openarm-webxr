@@ -57,10 +57,7 @@ export const PANELS = [
     // value here only stands in for a session without a panorama. `centerY`
     // is the pair's shared center line and must match REAR_VIEW's.
     id: "robot",
-    // 28px taller than the figure needs, for the gripper row under the mode
-    // banner. Both rows are placed relative to the bottom edge, so growing the
-    // canvas moves them down and leaves LIFTER and BASE where they were.
-    canvas: { width: 240, height: 368 },
+    canvas: { width: 240, height: 340 },
     distance: PANEL_DISTANCE,
     width: 0.26,
     centerX: 0,
@@ -133,24 +130,6 @@ const MODE = {
 // would hide one stick behind the other and look identical to one arm having
 // gone dead. Two tints drawn semi-transparent keep an exact overlap legible as
 // an overlap: the tints blend rather than one simply winning.
-// The gripper's force, under the mode banner at the very foot of the panel,
-// for the reason the banner gives: the figure only grows upward, so this is the
-// edge it can never reach. Colour carries the state as the banner's does, so a
-// softened gripper is noticeable without reading the row -- squeezing a heavy
-// object in soft mode fails quietly otherwise, and the operator needs to know
-// before they try rather than after it slips.
-const GRIPPER = {
-  rowHeight: 26,
-  font: "bold 13px monospace",
-  labelColor: "#0d1117",
-  // No message yet: the dataflow has no gripper-mode node, or it has not
-  // published. Drawn dim rather than skipped, so panel geometry does not depend
-  // on which dataflow is running.
-  unknown: { label: "GRIP —", row: IDLE },
-  hard: "#8b949e",
-  soft: "#d29922",
-};
-
 const ARM = {
   length: 42,
   lineWidth: 7,
@@ -228,14 +207,14 @@ class HudPanel {
   #armLeftJ1 = 0;
   #displayedArmRightJ1 = 0;
   #displayedArmLeftJ1 = 0;
-  // Null until a gripper-mode node publishes. Not defaulted to the config
-  // pair: this panel cannot know it, and a guess would read as fact.
-  #gripperName = null;
-  #gripperSpeed = 0;
-  #gripperTorque = 0;
+  // The gripper readout is drawn under the wrist videos rather than on these
+  // panels -- it belongs beside the fingers it describes. This socket is still
+  // the only one carrying it, so the message is handed straight on.
+  #onGripperMode = null;
 
-  constructor({ clears, reticleDistance }) {
+  constructor({ clears, reticleDistance, onGripperMode }) {
     this.#clears = clears;
+    this.#onGripperMode = onGripperMode ?? null;
     if (Number.isFinite(reticleDistance) && reticleDistance > 0) {
       this.#reticleDistance = reticleDistance;
     }
@@ -265,7 +244,7 @@ class HudPanel {
         } else if (message.type === "mode") {
           this.setBaseEngaged(message.base_engaged);
         } else if (message.type === "gripper") {
-          this.setGripperMode(
+          this.#onGripperMode?.(
             message.name,
             message.speed_rad_s,
             message.torque_nm,
@@ -445,27 +424,6 @@ class HudPanel {
     this.#stale = true;
   }
 
-  setGripperMode(name, speedRadS, torqueNm) {
-    if (
-      typeof name !== "string" ||
-      !Number.isFinite(speedRadS) ||
-      !Number.isFinite(torqueNm)
-    ) {
-      return;
-    }
-    if (
-      name === this.#gripperName &&
-      speedRadS === this.#gripperSpeed &&
-      torqueNm === this.#gripperTorque
-    ) {
-      return;
-    }
-    this.#gripperName = name;
-    this.#gripperSpeed = speedRadS;
-    this.#gripperTorque = torqueNm;
-    this.#stale = true;
-  }
-
   setTimerState(running, elapsedMilliseconds) {
     if (!Number.isFinite(elapsedMilliseconds)) {
       return;
@@ -627,40 +585,10 @@ class HudPanel {
       bannerY + MODE.bannerHeight / 2,
     );
 
-    this.#drawGripper(context, panel, bannerY);
-
     // Base first: the column and the hip joint sit on top of it, so drawing
     // the body second keeps that junction readable at every heading.
     this.#drawBase(context, mode.base);
     this.#drawTorso(context, mode);
-  }
-
-  #drawGripper(context, panel, bannerY) {
-    const known = this.#gripperName !== null;
-    // "SOFT" and "SOFT 60%" both read as softened; only the default pair is
-    // hard, and the node names that one HARD in every mapping.
-    const softened = known && this.#gripperName !== "HARD";
-    const rowY = bannerY - GRIPPER.rowHeight;
-
-    context.fillStyle = known
-      ? softened
-        ? GRIPPER.soft
-        : GRIPPER.hard
-      : GRIPPER.unknown.row;
-    context.fillRect(0, rowY, panel.canvas.width, GRIPPER.rowHeight);
-
-    context.fillStyle = GRIPPER.labelColor;
-    context.font = GRIPPER.font;
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillText(
-      known
-        ? `${this.#gripperName}  ${this.#gripperTorque.toFixed(2)}Nm  ` +
-            `${Math.round(this.#gripperSpeed)}r/s`
-        : GRIPPER.unknown.label,
-      panel.canvas.width / 2,
-      rowY + GRIPPER.rowHeight / 2,
-    );
   }
 
   #draw(now) {
