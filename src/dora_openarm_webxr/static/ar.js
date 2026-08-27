@@ -102,6 +102,13 @@ if (navigator.xr) {
             wristPanels === null &&
             instructionPanel === null,
           reticleDistance: configuration.panel?.distance,
+          // The gripper's force is drawn under the wrist videos, but the HUD's
+          // socket is the only one carrying it. Joined here rather than inside
+          // either module because it takes both to work out — the same reason
+          // layoutRearView is called from here. Optional-chained because the
+          // wrist panels can be turned off in the view configuration.
+          onGripperMode: (name, speedRadS, torqueNm) =>
+            wristPanels?.setGripperMode(name, speedRadS, torqueNm),
         });
         return configuration;
       }),

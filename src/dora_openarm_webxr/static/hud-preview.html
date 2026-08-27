@@ -48,6 +48,18 @@
         font-size: 11px;
         text-align: center;
       }
+      .grip-caption {
+        position: absolute;
+        box-sizing: border-box;
+        transform: translate(-50%, -50%);
+        border-radius: 2px;
+        color: #0d1117;
+        font: bold 11px monospace;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+      }
       .rear {
         position: absolute;
         /* Border and padding inside the measured box, or the outline renders
@@ -102,7 +114,7 @@
       </label>
       <label>
         <button id="grip" type="button">Press left grip</button>
-        <span id="grip-state">gripper: no message yet (dim row)</span>
+        <span id="grip-state">gripper: no message yet (no strip drawn)</span>
       </label>
       <label>
         Lifter height <input id="height" type="range" min="0" max="1" step="0.01" value="0.5">
@@ -177,13 +189,31 @@
         element.style.width = `${(100 * width) / distance / (2 * HALF_TAN_X)}%`;
       }
 
+      // Mirrors CAPTION.texture in wrist.js: the strip's height follows that
+      // texture's aspect ratio, so it is as tall here as it is in the headset.
+      const GRIP_CAPTION_ASPECT = 56 / 448;
+      const gripCaptions = [];
       for (const centerX of WRIST.centers) {
+        const widthPx = view.clientWidth * (WRIST.width / WRIST.distance / (2 * HALF_TAN_X));
+        const heightPx = widthPx * WRIST.aspect;
         const box = document.createElement("div");
         box.className = "wrist";
         box.textContent = "wrist";
         place(box, { centerX, centerY: 0, distance: WRIST.distance, width: WRIST.width });
-        box.style.height = `${view.clientWidth * (WRIST.width / WRIST.distance / (2 * HALF_TAN_X)) * WRIST.aspect}px`;
+        box.style.height = `${heightPx}px`;
         view.append(box);
+
+        // Same center and width as the video, pushed down by half of each, so
+        // it sits flush against the bottom edge exactly as wrist.js puts it.
+        const caption = document.createElement("div");
+        caption.className = "grip-caption";
+        caption.hidden = true;
+        place(caption, { centerX, centerY: 0, distance: WRIST.distance, width: WRIST.width });
+        const captionHeightPx = widthPx * GRIP_CAPTION_ASPECT;
+        caption.style.height = `${captionHeightPx}px`;
+        caption.style.marginTop = `${(heightPx + captionHeightPx) / 2}px`;
+        view.append(caption);
+        gripCaptions.push(caption);
       }
 
       // Placed from the same viewer-space numbers the headset uses, so the
@@ -237,8 +267,9 @@
           : "mode: TORSO (upper body owns the sticks)";
       });
 
-      // Walks the states the gripper row can be in, including the pre-first-
-      // message one that dataflows without a gripper-mode node stay in.
+      // Walks the states the strip can be in, including the pre-first-message
+      // one that dataflows without a gripper-mode node stay in — where wrist.js
+      // draws no strip at all rather than a placeholder.
       const GRIP_STATES = [
         null,
         { name: "HARD", speed: 50, torque: 1.5 },
@@ -252,14 +283,23 @@
         gripIndex = (gripIndex + 1) % GRIP_STATES.length;
         const next = GRIP_STATES[gripIndex];
         if (next === null) {
-          // Nothing can un-send a message, so the row is reset by rebuilding
-          // the state the panel starts in.
-          location.reload();
+          for (const caption of gripCaptions) {
+            caption.hidden = true;
+          }
+          gripState.textContent = "gripper: no message yet (no strip drawn)";
           return;
         }
-        hud.setGripperMode(next.name, next.speed, next.torque);
-        gripState.textContent =
-          `gripper: ${next.name} ${next.torque}Nm ${next.speed}r/s`;
+        // The same text and the same HARD-vs-softened colour test as
+        // CAPTION in wrist.js.
+        const text =
+          `${next.name}  ${next.torque.toFixed(2)}Nm  ${next.speed}r/s`;
+        for (const caption of gripCaptions) {
+          caption.hidden = false;
+          caption.textContent = text;
+          caption.style.background =
+            next.name === "HARD" ? "#8b949e" : "#d29922";
+        }
+        gripState.textContent = `gripper: ${text}`;
       });
 
       const height = document.getElementById("height");
