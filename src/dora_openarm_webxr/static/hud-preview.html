@@ -101,6 +101,10 @@
         <span id="mode-state">mode: TORSO (upper body owns the sticks)</span>
       </label>
       <label>
+        <button id="grip" type="button">Press left grip</button>
+        <span id="grip-state">gripper: no message yet (dim row)</span>
+      </label>
+      <label>
         Lifter height <input id="height" type="range" min="0" max="1" step="0.01" value="0.5">
         <span id="height-value">0.50</span>
       </label>
@@ -231,6 +235,31 @@
         modeState.textContent = engaged
           ? "mode: DRIVE (base owns the sticks, upper body frozen)"
           : "mode: TORSO (upper body owns the sticks)";
+      });
+
+      // Walks the states the gripper row can be in, including the pre-first-
+      // message one that dataflows without a gripper-mode node stay in.
+      const GRIP_STATES = [
+        null,
+        { name: "HARD", speed: 50, torque: 1.5 },
+        { name: "MEDIUM", speed: 30, torque: 1.0 },
+        { name: "SOFT", speed: 15, torque: 0.5 },
+        { name: "SOFT 60%", speed: 29, torque: 1.1 },
+      ];
+      let gripIndex = 0;
+      const gripState = document.getElementById("grip-state");
+      document.getElementById("grip").addEventListener("click", () => {
+        gripIndex = (gripIndex + 1) % GRIP_STATES.length;
+        const next = GRIP_STATES[gripIndex];
+        if (next === null) {
+          // Nothing can un-send a message, so the row is reset by rebuilding
+          // the state the panel starts in.
+          location.reload();
+          return;
+        }
+        hud.setGripperMode(next.name, next.speed, next.torque);
+        gripState.textContent =
+          `gripper: ${next.name} ${next.torque}Nm ${next.speed}r/s`;
       });
 
       const height = document.getElementById("height");

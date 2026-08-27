@@ -21,6 +21,7 @@ BASE_ENGAGED_INPUT = "base_engaged"
 BASE_POSE_INPUT = "base_pose"
 ARM_RIGHT_J1_INPUT = "arm_right_j1"
 ARM_LEFT_J1_INPUT = "arm_left_j1"
+GRIPPER_MODE_INPUT = "gripper_mode"
 HUD_UPDATE_INTERVAL = 1.0 / 30.0
 
 # `base_pose` is an odometry triple [x_m, y_m, theta_rad]. The panel draws a
@@ -118,6 +119,12 @@ _arm_right_j1: float | None = None
 _arm_right_j1_sequence = 0
 _arm_left_j1: float | None = None
 _arm_left_j1_sequence = 0
+# The gripper's selected force/speed pair and the label naming it. One sequence
+# for the three, because they only ever change together.
+_gripper_name: str | None = None
+_gripper_speed: float | None = None
+_gripper_torque: float | None = None
+_gripper_sequence = 0
 _state_event = asyncio.Event()
 
 
@@ -168,8 +175,35 @@ _timer = TimerState()
 _timer_sequence = 0
 
 
+def _handle_gripper_mode(event) -> bool:
+    """Keep the gripper's selected limits and the label naming them.
+
+    The label is carried on the wire rather than derived here: this node never
+    reads the arm config, so it has no way to know that 0.5 Nm is "soft" on a
+    particular robot, or which of three levels that is.
+    """
+    global _gripper_name, _gripper_sequence, _gripper_speed, _gripper_torque
+    try:
+        row = event["value"][0].as_py()
+        name = str(row["name"])
+        speed = float(row["speed_rad_s"])
+        torque = float(row["torque_nm"])
+    except (IndexError, KeyError, TypeError, ValueError):
+        return True
+    if not (math.isfinite(speed) and math.isfinite(torque)):
+        return True
+    if (name, speed, torque) == (_gripper_name, _gripper_speed, _gripper_torque):
+        return True
+    _gripper_name = name
+    _gripper_speed = speed
+    _gripper_torque = torque
+    _gripper_sequence += 1
+    _state_event.set()
+    return True
+
+
 def handle_event(event) -> bool:
-    """Keep the latest lifter height, waist angle or teleoperation mode."""
+    """Keep the latest lifter height, waist angle, gripper or teleop mode."""
     if event["type"] != "INPUT" or event["id"] not in (
         LIFTER_HEIGHT_INPUT,
         WAIST_ANGLE_INPUT,
@@ -177,8 +211,15 @@ def handle_event(event) -> bool:
         BASE_POSE_INPUT,
         ARM_RIGHT_J1_INPUT,
         ARM_LEFT_J1_INPUT,
+        GRIPPER_MODE_INPUT,
     ):
         return False
+
+    # A struct rather than a number, so it is read here instead of through the
+    # shared float-at-index path below -- and it must not reach that path's
+    # closing `else`, which reads anything left over as `base_engaged`.
+    if event["id"] == GRIPPER_MODE_INPUT:
+        return _handle_gripper_mode(event)
 
     if event["id"] == BASE_POSE_INPUT:
         index = BASE_POSE_HEADING_INDEX
@@ -266,6 +307,7 @@ def register_routes(app: FastAPI, should_exit) -> None:
         await websocket.accept()
         pose_sent: dict[str, int] = {}
         mode_sent = -1
+        gripper_sent = -1
         timer_sent = -1
         last_sent_at = 0.0
         loop = asyncio.get_running_loop()
@@ -302,6 +344,22 @@ def register_routes(app: FastAPI, should_exit) -> None:
                     mode_sent = _base_engaged_sequence
                     await websocket.send_json(
                         {"type": "mode", "base_engaged": _base_engaged}
+                    )
+                    sent = True
+                # Not rate limited either, and for the same reason: it changes
+                # only on a grip transition, and it tells the operator how hard
+                # the gripper is about to squeeze. Sent on connect too, so a
+                # headset that reconnects mid-run shows the pair actually in
+                # force rather than the startup default.
+                if _gripper_name is not None and _gripper_sequence != gripper_sent:
+                    gripper_sent = _gripper_sequence
+                    await websocket.send_json(
+                        {
+                            "type": "gripper",
+                            "name": _gripper_name,
+                            "speed_rad_s": _gripper_speed,
+                            "torque_nm": _gripper_torque,
+                        }
                     )
                     sent = True
                 # Always send an initial timer state. It lets a PC opened after
