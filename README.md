@@ -344,6 +344,29 @@ The monitor opens its own WebRTC peer and receives the same named video tracks
 as the headset. Camera frames are not duplicated onto the old `/video`,
 `/theta-video` or `/wrist-video` WebSocket endpoints.
 
+## WebRTC video bitrate
+
+The node uses aiortc's VP8 encoder. Its bitrate can be tuned per video track
+with `--video-bitrate`, `--video-min-bitrate` and `--video-max-bitrate`, or the
+corresponding environment variables. The initial target may move within the
+configured range as receiver bandwidth feedback arrives.
+
+For example, a 1920x960, 30 fps THETA preview on a fast LAN can start at 8 Mbps
+and range from 2 to 12 Mbps:
+
+```yaml
+env:
+  WEBRTC_VIDEO_BITRATE: "8000000"
+  WEBRTC_VIDEO_MIN_BITRATE: "2000000"
+  WEBRTC_VIDEO_MAX_BITRATE: "12000000"
+```
+
+The values apply independently to every active track and peer. With THETA and
+both wrist cameras, the example starts three encoders at 8 Mbps each. Opening
+`/monitor` creates another peer and another three encoders, so account for both
+the extra bandwidth and CPU load when tuning it. Restart the node to apply a
+change.
+
 For example, wire an independently normalized waist signal into the
 WebXR node with:
 
@@ -492,6 +515,9 @@ useful in a dora-rs dataflow YAML.
 | `--answer-host`          | `ANSWER_HOST`          | `127.0.0.1` | The host to write the SDP answer to in WebRTC-only mode.                          |
 | `--answer-port`          | `ANSWER_PORT`          | (required with `--offer`) | The port to write the SDP answer to in WebRTC-only mode.            |
 | `--connect-timeout`      | `CONNECT_TIMEOUT`      | `60`        | Seconds to wait for the browser to connect in WebRTC-only mode.                   |
+| `--video-bitrate`        | `WEBRTC_VIDEO_BITRATE` | `500000`    | Initial VP8 bitrate in bits per second for each video track.                      |
+| `--video-min-bitrate`    | `WEBRTC_VIDEO_MIN_BITRATE` | `250000` | Minimum per-track VP8 bitrate after receiver bandwidth feedback.                  |
+| `--video-max-bitrate`    | `WEBRTC_VIDEO_MAX_BITRATE` | `1500000` | Maximum per-track VP8 bitrate after receiver bandwidth feedback.                  |
 | `--quit-button`          | `QUIT_BUTTON`          | (none)      | The controller button (`a`, `b`, `x` or `y`) that shuts the node down when pressed. Giving this option also publishes `"quit"` on the `command` output whenever the node exits, even by an error rather than the button. May be repeated for several buttons; the environment variable takes a comma-separated list. |
 | `--view-configuration-file` | `VIEW_CONFIGURATION_FILE` | (none)  | The YAML file that describes how the head camera is drawn in the VR device. Read once when the node starts. |
 | `--calibration`          | `CALIBRATION`          | off         | Measure the neck pivot with the Y button, and show the instructions for it in the headset. Off unless asked for. |

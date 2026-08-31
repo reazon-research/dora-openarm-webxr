@@ -967,6 +967,43 @@ def main():
         ),
     )
     parser.add_argument(
+        "--video-bitrate",
+        type=int,
+        default=int(
+            os.getenv("WEBRTC_VIDEO_BITRATE", str(webrtc.DEFAULT_VIDEO_BITRATE))
+        ),
+        help=(
+            "Initial VP8 bitrate in bits per second for each video track "
+            f"(default: {webrtc.DEFAULT_VIDEO_BITRATE})"
+        ),
+    )
+    parser.add_argument(
+        "--video-min-bitrate",
+        type=int,
+        default=int(
+            os.getenv(
+                "WEBRTC_VIDEO_MIN_BITRATE", str(webrtc.DEFAULT_VIDEO_MIN_BITRATE)
+            )
+        ),
+        help=(
+            "Minimum VP8 bitrate after receiver bandwidth feedback, per track "
+            f"(default: {webrtc.DEFAULT_VIDEO_MIN_BITRATE})"
+        ),
+    )
+    parser.add_argument(
+        "--video-max-bitrate",
+        type=int,
+        default=int(
+            os.getenv(
+                "WEBRTC_VIDEO_MAX_BITRATE", str(webrtc.DEFAULT_VIDEO_MAX_BITRATE)
+            )
+        ),
+        help=(
+            "Maximum VP8 bitrate after receiver bandwidth feedback, per track "
+            f"(default: {webrtc.DEFAULT_VIDEO_MAX_BITRATE})"
+        ),
+    )
+    parser.add_argument(
         "--quit-button",
         action="append",
         choices=list(_BUTTONS),
@@ -1037,6 +1074,15 @@ def main():
             ice_servers = webrtc.parse_ice_servers(args.ice_servers)
         except (TypeError, ValueError) as error:
             parser.error(f"--ice-servers: {error}")
+
+    try:
+        webrtc.configure_video_bitrate(
+            args.video_bitrate,
+            args.video_min_bitrate,
+            args.video_max_bitrate,
+        )
+    except ValueError as error:
+        parser.error(f"video bitrate configuration: {error}")
 
     video.configure(args)
     theta.configure(video.view_configuration())

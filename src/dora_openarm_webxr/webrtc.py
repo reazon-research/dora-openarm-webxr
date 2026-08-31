@@ -54,6 +54,7 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
 )
+from aiortc.codecs import vpx
 from aiortc.mediastreams import VideoStreamTrack
 
 from . import theta, video
@@ -66,11 +67,41 @@ _CLOCK_RATE = 90_000
 # head view and therefore needs only three. Unused transceivers stay inactive.
 VIDEO_TRANSCEIVERS = 4
 
+# aiortc does not expose RTCRtpSender.setParameters(), so its VP8 encoder
+# module is the supported control point available to this application. Keep the
+# dependency defaults as public constants for argparse and tests, then update
+# the live module once at startup, before any sender creates an encoder.
+DEFAULT_VIDEO_BITRATE = vpx.DEFAULT_BITRATE
+DEFAULT_VIDEO_MIN_BITRATE = vpx.MIN_BITRATE
+DEFAULT_VIDEO_MAX_BITRATE = vpx.MAX_BITRATE
+
 # The default deployment keeps robot and browser on one LAN, where host
 # candidates connect directly. In particular, no public STUN lookup means an
 # offline LAN does not spend tens of seconds gathering candidates. A signaling
 # service crossing NAT must pass its own STUN/TURN list through ``ice_servers``.
 ICE_SERVERS: list[RTCIceServer] = []
+
+
+def configure_video_bitrate(target: int, minimum: int, maximum: int) -> None:
+    """Set the target and REMB range of every VP8 encoder, in bits per second.
+
+    aiortc constructs one encoder per active video track and peer. Its receiver
+    bandwidth estimate may move the target after startup, clamped to the given
+    minimum and maximum.
+    """
+    if minimum <= 0 or not minimum <= target <= maximum:
+        raise ValueError(
+            "must satisfy 0 < minimum <= target <= maximum, got "
+            f"{minimum} <= {target} <= {maximum}"
+        )
+    vpx.DEFAULT_BITRATE = target
+    vpx.MIN_BITRATE = minimum
+    vpx.MAX_BITRATE = maximum
+    print(
+        "WebRTC VP8 bitrate: "
+        f"target {target} bps, range {minimum}-{maximum} bps per track",
+        flush=True,
+    )
 
 
 def parse_ice_servers(text: str) -> list[RTCIceServer]:

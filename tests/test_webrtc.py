@@ -467,6 +467,38 @@ def test_parse_ice_servers_malformed():
         webrtc.parse_ice_servers('[{"username": "user"}]')
 
 
+def test_configure_video_bitrate(monkeypatch, capsys):
+    monkeypatch.setattr(webrtc.vpx, "DEFAULT_BITRATE", 1)
+    monkeypatch.setattr(webrtc.vpx, "MIN_BITRATE", 1)
+    monkeypatch.setattr(webrtc.vpx, "MAX_BITRATE", 1)
+
+    webrtc.configure_video_bitrate(8_000_000, 2_000_000, 12_000_000)
+
+    assert webrtc.vpx.DEFAULT_BITRATE == 8_000_000
+    assert webrtc.vpx.MIN_BITRATE == 2_000_000
+    assert webrtc.vpx.MAX_BITRATE == 12_000_000
+    encoder = webrtc.vpx.Vp8Encoder()
+    assert encoder.target_bitrate == 8_000_000
+    encoder.target_bitrate = 20_000_000
+    assert encoder.target_bitrate == 12_000_000
+    encoder.target_bitrate = 1
+    assert encoder.target_bitrate == 2_000_000
+    assert "8000000 bps" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("target", "minimum", "maximum"),
+    [
+        (1, 0, 2),
+        (1, 2, 3),
+        (4, 2, 3),
+    ],
+)
+def test_configure_video_bitrate_rejects_invalid_range(target, minimum, maximum):
+    with pytest.raises(ValueError, match="0 < minimum <= target <= maximum"):
+        webrtc.configure_video_bitrate(target, minimum, maximum)
+
+
 def test_theta_and_wrist_track_roles(monkeypatch):
     monkeypatch.setattr(
         video,
