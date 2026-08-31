@@ -6,6 +6,8 @@
 """Low-latency THETA live-preview downlink for the WebXR front-end."""
 
 import asyncio
+from collections.abc import Callable
+import math
 import os
 import threading
 
@@ -22,6 +24,13 @@ _frame_event: asyncio.Event | None = None
 _event_loop: asyncio.AbstractEventLoop | None = None
 _stop_event = threading.Event()
 _thread: threading.Thread | None = None
+_temperature_thread: threading.Thread | None = None
+_board_temperature_callback: Callable[[float], None] | None = None
+
+
+TEMPERATURE_POLL_INTERVAL = 5.0
+BOARD_TEMPERATURE_MIN = -10.0
+BOARD_TEMPERATURE_MAX = 100.0
 
 
 def configure(view_configuration: dict) -> None:
@@ -121,27 +130,76 @@ def _capture() -> None:
                 _stop_event.wait(1.0)
 
 
-def start() -> None:
+def _extract_board_temperature(payload: dict) -> float:
+    """Return a validated ``_boardTemp`` value from an OSC state response."""
+    value = float(payload["state"]["_boardTemp"])
+    if not (
+        math.isfinite(value) and BOARD_TEMPERATURE_MIN <= value <= BOARD_TEMPERATURE_MAX
+    ):
+        raise ValueError(f"invalid THETA board temperature: {value!r}")
+    return value
+
+
+def _poll_temperature() -> None:
+    """Poll the THETA board temperature and publish it on the asyncio loop."""
+    url = _configuration["host"].rstrip("/") + "/osc/state"
+    auth = HTTPDigestAuth(_configuration["username"], _configuration["password"])
+    warned = False
+    while not _stop_event.is_set():
+        try:
+            with requests.post(url, auth=auth, timeout=(5, 5)) as response:
+                response.raise_for_status()
+                temperature = _extract_board_temperature(response.json())
+            callback = _board_temperature_callback
+            if _event_loop is not None and callback is not None:
+                _event_loop.call_soon_threadsafe(callback, temperature)
+            warned = False
+        except (
+            KeyError,
+            OSError,
+            TypeError,
+            ValueError,
+            requests.RequestException,
+        ) as error:
+            if not _stop_event.is_set() and not warned:
+                print(f"THETA board temperature unavailable: {error}", flush=True)
+                warned = True
+        _stop_event.wait(TEMPERATURE_POLL_INTERVAL)
+
+
+def start(on_board_temperature: Callable[[float], None] | None = None) -> None:
     """Start capture when the configured view uses the THETA panorama."""
-    global _event_loop, _frame_event, _thread
+    global _board_temperature_callback, _event_loop, _frame_event, _thread
+    global _temperature_thread
     if _thread is not None or not _configuration:
         return
+    _board_temperature_callback = on_board_temperature
     _event_loop = asyncio.get_running_loop()
     _frame_event = asyncio.Event()
     _stop_event.clear()
     _thread = threading.Thread(target=_capture, name="theta-preview", daemon=True)
     _thread.start()
+    if on_board_temperature is not None:
+        _temperature_thread = threading.Thread(
+            target=_poll_temperature,
+            name="theta-temperature",
+            daemon=True,
+        )
+        _temperature_thread.start()
 
 
 async def stop() -> None:
     """Ask the worker to stop without blocking the Dora event loop."""
-    global _thread
-    thread = _thread
-    if thread is None:
+    global _board_temperature_callback, _event_loop, _temperature_thread, _thread
+    threads = [thread for thread in (_thread, _temperature_thread) if thread]
+    if not threads:
         return
     _stop_event.set()
-    await asyncio.to_thread(thread.join, 6.0)
+    await asyncio.gather(*(asyncio.to_thread(thread.join, 6.0) for thread in threads))
     _thread = None
+    _temperature_thread = None
+    _board_temperature_callback = None
+    _event_loop = None
 
 
 def register_routes(app: FastAPI, should_exit) -> None:

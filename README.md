@@ -156,13 +156,18 @@ instead of building latency.
 ## Head-locked HUD
 
 Every camera mode, including `mono`, `stereo` and `theta360`, shows a compact
-timer at the upper center and a normalized lifter pose at the upper right of
+timer at the upper center and a normalized lifter pose at the lower center of
 the operator's view. The panels omit labels and numeric pose values to keep
 the view clear. On the left controller, tap X to start or stop the timer, or
 hold X for one second to reset it. A reset hold does not also trigger start or
 stop when the button is released. Y remains reserved for neck calibration. A
 small green reticle stays fixed at the center of the WebXR and desktop monitor
 views. In WebXR it is drawn at the same depth as the configured camera panel.
+
+When the `theta360` view is active, a small panel in the upper-right shows the
+THETA main-board temperature in degrees Celsius. The node reads `_boardTemp`
+from `POST /osc/state` every five seconds and sends only that value to the HUD.
+The panel stays hidden until the first valid temperature is received.
 
 The lifter pose displays the latest value received on the optional
 `waist_height` Dora input. The input is a scalar normalized to `0.0`

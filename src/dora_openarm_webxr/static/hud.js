@@ -30,11 +30,10 @@ void main() {
 }
 `;
 
-// Values are in viewer-space meters, so both panels follow the headset without
-// reacting to a head turn. The two sit centered above and below the view, an
-// equal angle off the reticle, leaving the middle band clear for the work and
-// the flanks clear for the wrist cameras. Exported so the preview harness can
-// lay the panels out from the same numbers the headset uses.
+// Values are in viewer-space meters, so the panels follow the headset without
+// reacting to a head turn. The timer and robot sit centered above and below the
+// view; the temperature stays in the upper-right periphery. Exported so the
+// preview harness can lay the panels out from the same numbers the headset uses.
 // Every head-locked element sits on this one plane — the panels here, the
 // reticle below, the wrist cameras, and the rear-view window in panorama.js.
 // Mixed distances make the eyes reverge between neighbours, which reads as the
@@ -48,6 +47,16 @@ export const PANELS = [
     distance: PANEL_DISTANCE,
     width: 0.25,
     centerX: 0,
+    centerY: 0.45,
+  },
+  {
+    // Kept in the upper-right periphery: visible at a glance without covering
+    // either the central task area or the right wrist camera below it.
+    id: "temperature",
+    canvas: { width: 256, height: 72 },
+    distance: PANEL_DISTANCE,
+    width: 0.2,
+    centerX: 0.55,
     centerY: 0.45,
   },
   {
@@ -193,6 +202,8 @@ class HudPanel {
   #displayedWaistHeight = 50;
   #waistAngle = 0;
   #displayedWaistAngle = 0;
+  #boardTemperature = null;
+  #displayedBoardTemperature = null;
   // Matches the swerve lock's startup default: the upper body owns the sticks
   // until the first grip press, so the HUD is right before the first message.
   #baseEngaged = false;
@@ -243,6 +254,8 @@ class HudPanel {
           this.setBaseHeading(message.value);
         } else if (message.type === "mode") {
           this.setBaseEngaged(message.base_engaged);
+        } else if (message.type === "theta-board-temperature") {
+          this.setBoardTemperature(message.value_celsius);
         } else if (message.type === "gripper") {
           this.#onGripperMode?.(
             message.name,
@@ -374,6 +387,18 @@ class HudPanel {
     const displayed = Math.round(this.#waistAngle);
     if (displayed !== this.#displayedWaistAngle) {
       this.#displayedWaistAngle = displayed;
+      this.#stale = true;
+    }
+  }
+
+  setBoardTemperature(value) {
+    if (!Number.isFinite(value) || value < -10 || value > 100) {
+      return;
+    }
+    this.#boardTemperature = value;
+    const displayed = Math.round(value);
+    if (displayed !== this.#displayedBoardTemperature) {
+      this.#displayedBoardTemperature = displayed;
       this.#stale = true;
     }
   }
@@ -591,6 +616,31 @@ class HudPanel {
     this.#drawTorso(context, mode);
   }
 
+  #drawTemperature() {
+    const panel = PANELS.find(({ id }) => id === "temperature");
+    const context = this.#contexts.get("temperature");
+    context.clearRect(0, 0, panel.canvas.width, panel.canvas.height);
+    if (this.#boardTemperature === null) {
+      return;
+    }
+
+    context.fillStyle = "rgba(13, 17, 23, 0.78)";
+    context.fillRect(0, 0, panel.canvas.width, panel.canvas.height);
+    context.textBaseline = "middle";
+    context.fillStyle = "#8b949e";
+    context.font = "bold 19px monospace";
+    context.textAlign = "left";
+    context.fillText("THETA BOARD", 14, panel.canvas.height / 2);
+    context.fillStyle = "#ffffff";
+    context.font = "bold 30px monospace";
+    context.textAlign = "right";
+    context.fillText(
+      `${this.#displayedBoardTemperature}°C`,
+      panel.canvas.width - 14,
+      panel.canvas.height / 2,
+    );
+  }
+
   #draw(now) {
     const panel = PANELS.find(({ id }) => id === "timer");
     const context = this.#contexts.get("timer");
@@ -609,6 +659,7 @@ class HudPanel {
     );
 
     this.#drawRobot();
+    this.#drawTemperature();
   }
 
   updateCanvas(now = performance.now()) {
@@ -693,11 +744,7 @@ class HudPanel {
         const halfHeight =
           (halfWidth * panel.canvas.height) / panel.canvas.width;
         gl.uniform2f(this.#uniforms.u_half_extent, halfWidth, halfHeight);
-        gl.uniform2f(
-          this.#uniforms.u_center,
-          panel.centerX,
-          panel.centerY,
-        );
+        gl.uniform2f(this.#uniforms.u_center, panel.centerX, panel.centerY);
         gl.uniform1f(this.#uniforms.u_distance, panel.distance);
         gl.bindTexture(gl.TEXTURE_2D, this.#textures.get(panel.id));
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
