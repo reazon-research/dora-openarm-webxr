@@ -48,6 +48,16 @@ def _push(eye: str, payload: bytes) -> None:
     )
 
 
+def _push_wrist(side: str, payload: bytes) -> None:
+    video.handle_event(
+        {
+            "type": "INPUT",
+            "id": f"camera_wrist_{side}",
+            "value": pa.array(np.frombuffer(payload, dtype=np.uint8)),
+        }
+    )
+
+
 def test_eyes_default_mono():
     assert video.eyes() == ["right"]
 
@@ -60,6 +70,16 @@ def test_eyes_stereo(tmp_path):
 def test_eyes_none(tmp_path):
     _configure_view(tmp_path, "none")
     assert video.eyes() == []
+
+
+def test_eyes_theta360(tmp_path):
+    _configure_view(tmp_path, "theta360")
+    assert video.eyes() == []
+    assert video.track_roles() == ["wrist-left", "wrist-right"]
+
+
+def test_track_roles_default_mono():
+    assert video.track_roles() == ["head-right", "wrist-left", "wrist-right"]
 
 
 def test_handle_event_ignores_other_inputs():
@@ -114,3 +134,19 @@ async def _run_wait_next_eyes():
     _push("right", b"right-frame")
     payload, _sequence = await asyncio.wait_for(waiter, 5.0)
     assert payload == b"right-frame"
+
+
+def test_wait_next_wrist_sides_are_independent():
+    asyncio.run(_run_wait_next_wrist_sides())
+
+
+async def _run_wait_next_wrist_sides():
+    _push_wrist("left", b"left-wrist")
+    waiter = asyncio.ensure_future(video.wait_next_role("wrist-right", 0))
+    await asyncio.sleep(0.05)
+    assert not waiter.done()
+
+    _push_wrist("right", b"right-wrist")
+    payload, sequence = await asyncio.wait_for(waiter, 5.0)
+    assert payload == b"right-wrist"
+    assert sequence == 1

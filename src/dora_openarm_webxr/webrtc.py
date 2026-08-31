@@ -14,12 +14,11 @@
 
 """WebXR teleoperation over WebRTC.
 
-Everything the VR device and the node say to each other rides one peer
-connection, so the page can be served by anyone -- this node over HTTPS
-during development, or a hosted service in production. That is the whole
-point: WebRTC authenticates itself with a self-signed certificate and an
-SDP fingerprint, so a node reached this way needs no certificate of its
-own and no HTTPS server.
+Pose, session control and camera media ride one peer connection, so the page
+can be served by anyone -- this node over HTTPS during development, or a
+hosted service in production. WebRTC authenticates itself with a self-signed
+certificate and an SDP fingerprint, so a node reached this way needs no
+certificate of its own and no HTTPS server.
 
 Two data channels, split by what they can afford to lose:
 
@@ -36,13 +35,11 @@ Two data channels, split by what they can afford to lose:
   run. Pushing the configuration is what lets a page this node never
   served still know how to draw itself.
 
-Camera frames leave on WebRTC video tracks, one per eye, in the order
-:func:`.video.eyes` gives. The eye order rides the ``control`` channel's
-configuration message rather than being implied by track order, because
-the mono view sends one track and the browser must not have to guess
-which eye it is. Both tracks are stamped from one clock so the receiver
-can line the eyes up; two clocks would let the eyes drift apart, which
-in a headset is worse than either eye being late.
+Camera frames leave on WebRTC video tracks. The control channel names each
+track's role -- head eye, THETA panorama or wrist side -- because negotiation
+order alone cannot tell the browser which panel should draw it. Every track on
+a connection shares one RTP clock so related camera frames cannot drift onto
+independent timelines.
 """
 
 import asyncio
@@ -59,16 +56,15 @@ from aiortc import (
 )
 from aiortc.mediastreams import VideoStreamTrack
 
-from . import video
+from . import theta, video
 
 # RTP video clock; pts for outgoing frames are expressed in this rate.
 _CLOCK_RATE = 90_000
 
-# Public so the front-end and the tests agree on one number: the browser
-# always negotiates this many recvonly video transceivers, whatever the
-# view draws, because the one-shot signaling here cannot renegotiate
-# later and the browser does not know the view when it makes the offer.
-VIDEO_TRANSCEIVERS = 2
+# Public so the front-end and the tests agree on one number. Four covers the
+# largest view: stereo head video plus both wrist cameras. THETA replaces the
+# head view and therefore needs only three. Unused transceivers stay inactive.
+VIDEO_TRANSCEIVERS = 4
 
 _STUN_URL = "stun:stun.cloudflare.com:3478"
 
@@ -137,13 +133,29 @@ class _SharedClock:
         return int((now - self._t0) * _CLOCK_RATE)
 
 
-class _EyeVideoTrack(VideoStreamTrack):
-    """Video track that decodes one eye's JPEG frames on demand."""
+def track_roles() -> list[str]:
+    """Return every active video role in negotiation order."""
+    roles = []
+    if video.view_configuration().get("view") == "theta360":
+        roles.append("theta")
+    roles.extend(video.track_roles())
+    return roles
 
-    def __init__(self, eye: str, clock: _SharedClock) -> None:
-        """Attach to an eye before its first frame, sharing ``clock``."""
+
+async def _wait_next(role: str, seen_sequence: int) -> tuple[bytes, int]:
+    """Wait for the newest JPEG belonging to ``role``."""
+    if role == "theta":
+        return await theta.wait_next(seen_sequence)
+    return await video.wait_next_role(role, seen_sequence)
+
+
+class _JpegVideoTrack(VideoStreamTrack):
+    """Video track that decodes one latest-frame JPEG source on demand."""
+
+    def __init__(self, role: str, clock: _SharedClock) -> None:
+        """Attach to a camera role before its first frame, sharing ``clock``."""
         super().__init__()
-        self._eye = eye
+        self._role = role
         self._clock = clock
         self._seen_sequence = 0
         # The MJPEG decoder is stateful, so each track owns one.
@@ -151,10 +163,10 @@ class _EyeVideoTrack(VideoStreamTrack):
         self._warned_decode = False
 
     async def recv(self) -> av.VideoFrame:
-        """Return the eye's next camera frame, stamped from the shared clock."""
+        """Return the source's next frame, stamped from the shared clock."""
         while True:
-            jpeg, self._seen_sequence = await video.wait_next(
-                self._eye, self._seen_sequence
+            jpeg, self._seen_sequence = await _wait_next(
+                self._role, self._seen_sequence
             )
             try:
                 frames = self._decoder.decode(av.Packet(jpeg))
@@ -162,7 +174,7 @@ class _EyeVideoTrack(VideoStreamTrack):
                 if not self._warned_decode:
                     self._warned_decode = True
                     print(
-                        f"WARNING: the {self._eye} camera input is not decodable JPEG",
+                        f"WARNING: the {self._role} camera input is not decodable JPEG",
                         flush=True,
                     )
                 continue
@@ -204,6 +216,7 @@ class WebRTCServer:
         self._ice_servers = ice_servers
         self._pcs: set = set()
         self._controls: set = set()
+        self._track_roles: dict = {}
         self._running = True
 
     @property
@@ -225,6 +238,7 @@ class WebRTCServer:
         pcs = list(self._pcs)
         self._pcs.clear()
         self._controls.clear()
+        self._track_roles.clear()
         for pc in pcs:
             await pc.close()
 
@@ -242,9 +256,15 @@ class WebRTCServer:
     async def answer(self, offer_sdp: str) -> str:
         """Answer one offer and return the bare answer SDP."""
         pc = self._create_peer()
-        return await self._answer(
-            pc, RTCSessionDescription(sdp=offer_sdp, type="offer")
-        )
+        try:
+            return await self._answer(
+                pc, RTCSessionDescription(sdp=offer_sdp, type="offer")
+            )
+        except Exception:
+            self._pcs.discard(pc)
+            self._track_roles.pop(pc, None)
+            await pc.close()
+            raise
 
     async def negotiate_oneshot(
         self,
@@ -299,6 +319,7 @@ class WebRTCServer:
         if not connected:
             await pc.close()
             self._pcs.discard(pc)
+            self._track_roles.pop(pc, None)
             raise RuntimeError(
                 f"no WebRTC connection within {connect_timeout:g}s of the answer"
             )
@@ -316,8 +337,18 @@ class WebRTCServer:
         """
         await pc.setRemoteDescription(offer)
         clock = _SharedClock()
-        for eye in video.eyes():
-            pc.addTrack(_EyeVideoTrack(eye, clock))
+        roles = track_roles()
+        if len(roles) > VIDEO_TRANSCEIVERS:
+            raise RuntimeError(
+                f"{len(roles)} video tracks exceed {VIDEO_TRANSCEIVERS} negotiated slots"
+            )
+        self._track_roles[pc] = roles
+        print(
+            f"WebRTC video tracks: {', '.join(roles) if roles else 'none'}",
+            flush=True,
+        )
+        for role in roles:
+            pc.addTrack(_JpegVideoTrack(role, clock))
         await pc.setLocalDescription(await pc.createAnswer())
         return pc.localDescription.sdp
 
@@ -343,10 +374,9 @@ class WebRTCServer:
                         "type": "configuration",
                         "view_configuration": video.view_configuration(),
                         "calibration": self._calibration_enabled,
-                        # Which eye each video track carries, in track
-                        # order. The mono view sends one track, so the
-                        # browser cannot infer the eye from the count.
-                        "eyes": video.eyes(),
+                        # Which panel each video track feeds, in negotiation
+                        # order. A track itself carries no application role.
+                        "tracks": self._track_roles.get(pc, []),
                     }
                 )
             )
@@ -377,9 +407,11 @@ class WebRTCServer:
             # one on. Only the terminal states count: "disconnected" is
             # also what a brief network blip looks like, and that can
             # still recover.
+            print(f"WebRTC peer state: {pc.connectionState}", flush=True)
             if pc.connectionState in ("failed", "closed"):
                 self._pcs.discard(pc)
                 self._controls.discard(control)
+                self._track_roles.pop(pc, None)
                 await pc.close()
 
         return pc

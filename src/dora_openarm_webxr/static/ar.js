@@ -35,6 +35,17 @@ const FALLBACK_CONFIGURATION = {
 };
 
 if (navigator.xr) {
+  const startButton = document.getElementById("start");
+  const logElement = document.getElementById("log");
+  startButton.disabled = true;
+
+  function showConnectionState(message, error = false) {
+    startButton.textContent = message;
+    if (error) {
+      logElement.textContent = message;
+    }
+  }
+
   let connection = null;
   let runningSession = null;
   let configuration = null;
@@ -48,8 +59,11 @@ if (navigator.xr) {
   // this file, the node still decides how it draws itself. The session
   // can only start once this has resolved, so the view and the panels
   // are always set by then.
-  const sessionReady = connect().then((opened) => {
+  const sessionReady = connect({
+    onState: (state) => showConnectionState(state),
+  }).then((opened) => {
     connection = opened;
+    logElement.textContent = `WebRTC transport: ${opened.protocol}`;
     configuration = opened.configuration || FALLBACK_CONFIGURATION;
 
     // How many images: the default "mono" draws one, "stereo" draws one
@@ -62,7 +76,7 @@ if (navigator.xr) {
         configuration,
         PANELS.find(({ id }) => id === "robot"),
       );
-      cameraPanel = createPanoramaView(configuration);
+      cameraPanel = createPanoramaView(configuration, opened.tracks.theta);
     } else if (configuration.view === "stereo") {
       cameraPanel = createStereoPanel(configuration, opened.tracks);
     } else if (configuration.view !== "none") {
@@ -72,7 +86,7 @@ if (navigator.xr) {
     // Dora inputs supply JPEG frames. Set wrist_panels.enabled to false to
     // avoid opening their independent video stream altogether.
     if (configuration.wrist_panels?.enabled !== false) {
-      wristPanels = createWristPanels(configuration, {
+      wristPanels = createWristPanels(configuration, opened.tracks, {
         clears: cameraPanel === null,
       });
     }
@@ -112,6 +126,7 @@ if (navigator.xr) {
     // frozen view has no way to tell that nothing is reaching the robot.
     opened.onClose(() => {
       connection = null;
+      showConnectionState("WebRTC disconnected", true);
       if (runningSession) {
         runningSession.end();
         runningSession = null;
@@ -386,7 +401,12 @@ if (navigator.xr) {
       });
   }
   function onStart(mode) {
-    navigator.xr.requestSession(mode).then(onSessionStart);
+    navigator.xr
+      .requestSession(mode)
+      .then(onSessionStart)
+      .catch((error) => {
+        showConnectionState(`Could not start WebXR: ${error}`, true);
+      });
   }
 
   // The session mode is configured with the head camera view so that
@@ -398,13 +418,22 @@ if (navigator.xr) {
         if (isSupported) {
           // WebXR requires explicit user interaction on start. We use
           // button click here.
-          document.getElementById("start").addEventListener("click", () => {
+          startButton.addEventListener("click", () => {
             onStart(mode);
           });
+          startButton.disabled = false;
+          showConnectionState("Start");
+        } else {
+          showConnectionState(`${mode} is not supported`, true);
         }
       });
     })
     .catch((error) => {
-      console.error("cannot connect to the node: " + error);
+      console.error(`cannot connect to the node: ${error}`);
+      showConnectionState(`WebRTC connection failed: ${error}`, true);
     });
+} else {
+  const startButton = document.getElementById("start");
+  startButton.disabled = true;
+  startButton.textContent = "WebXR is not available";
 }

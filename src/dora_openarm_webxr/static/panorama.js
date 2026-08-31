@@ -6,6 +6,8 @@
 // Draws a mono equirectangular THETA preview around the viewer. Only the
 // headset orientation is used, so translation cannot create false parallax.
 
+import { createVideoSource } from "./video-source.js";
+
 const VERTEX_SHADER = `
 attribute vec2 a_corner;
 varying vec2 v_ndc;
@@ -202,48 +204,12 @@ class PanoramaView {
   #uniforms = {};
   #texture = null;
   #hasTexture = false;
-  #pending = null;
-  #queued = null;
-  #decoding = false;
-  #closed = false;
+  #source = null;
   #configuration = null;
-  #websocket = null;
 
-  constructor(configuration) {
+  constructor(configuration, track) {
     this.#configuration = configuration;
-    const websocket = new WebSocket("wss://" + location.host + "/theta-video");
-    websocket.binaryType = "arraybuffer";
-    websocket.addEventListener("message", (event) => {
-      // A single replaceable slot: never accumulate a decode backlog.
-      this.#queued = new Blob([event.data], { type: "image/jpeg" });
-      this.#decodeLatest();
-    });
-    this.#websocket = websocket;
-  }
-
-  #decodeLatest() {
-    if (this.#decoding || !this.#queued || this.#closed) {
-      return;
-    }
-    const jpeg = this.#queued;
-    this.#queued = null;
-    this.#decoding = true;
-    createImageBitmap(jpeg)
-      .then((bitmap) => {
-        if (this.#closed) {
-          bitmap.close();
-          return;
-        }
-        if (this.#pending) {
-          this.#pending.close();
-        }
-        this.#pending = bitmap;
-      })
-      .catch(() => {})
-      .finally(() => {
-        this.#decoding = false;
-        this.#decodeLatest();
-      });
+    this.#source = track ? createVideoSource(track) : null;
   }
 
   attach(gl) {
@@ -286,16 +252,12 @@ class PanoramaView {
   }
 
   #upload() {
-    if (!this.#pending) {
+    if (!this.#source) {
       return;
     }
-    const bitmap = this.#pending;
-    this.#pending = null;
-    const gl = this.#gl;
-    gl.bindTexture(gl.TEXTURE_2D, this.#texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
-    bitmap.close();
-    this.#hasTexture = true;
+    if (this.#source.upload(this.#gl, this.#texture)) {
+      this.#hasTexture = true;
+    }
   }
 
   render(session, space, frame) {
@@ -453,19 +415,13 @@ class PanoramaView {
   }
 
   close() {
-    this.#closed = true;
-    this.#queued = null;
-    if (this.#pending) {
-      this.#pending.close();
-      this.#pending = null;
-    }
-    if (this.#websocket) {
-      this.#websocket.close();
-      this.#websocket = null;
+    if (this.#source) {
+      this.#source.close();
+      this.#source = null;
     }
   }
 }
 
-export function createPanoramaView(configuration) {
-  return new PanoramaView(configuration);
+export function createPanoramaView(configuration, track) {
+  return new PanoramaView(configuration, track);
 }

@@ -26,8 +26,9 @@ from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
 )
+from aiortc.mediastreams import MediaStreamError
 
-from dora_openarm_webxr import video, webrtc
+from dora_openarm_webxr import theta, video, webrtc
 
 
 @pytest.fixture(autouse=True)
@@ -36,8 +37,10 @@ def _isolate(monkeypatch):
     # server would only slow gathering down.
     monkeypatch.setattr(webrtc, "ICE_SERVERS", [])
     video.reset()
+    theta.reset()
     yield
     video.reset()
+    theta.reset()
 
 
 def _encode_jpeg() -> bytes:
@@ -60,6 +63,16 @@ def _push_jpeg(jpeg: bytes) -> None:
         {
             "type": "INPUT",
             "id": "camera_head_right",
+            "value": pa.array(np.frombuffer(jpeg, dtype=np.uint8)),
+        }
+    )
+
+
+def _push_wrist_jpeg(side: str, jpeg: bytes) -> None:
+    video.handle_event(
+        {
+            "type": "INPUT",
+            "id": f"camera_wrist_{side}",
             "value": pa.array(np.frombuffer(jpeg, dtype=np.uint8)),
         }
     )
@@ -94,8 +107,18 @@ def _browser_peer(received: dict) -> tuple:
 
     @pc.on("track")
     def on_track(track):
+        index = len(received.setdefault("video-tracks", []))
+        received["video-tracks"].append(track)
+
         async def read_one():
-            received["frame"] = await track.recv()
+            try:
+                frame = await track.recv()
+                received["frame"] = frame
+                received.setdefault("video-frames", {})[index] = frame
+            except MediaStreamError:
+                # Other negotiated camera roles may have no frame before the
+                # test closes the peer; closing those receivers is expected.
+                pass
 
         asyncio.ensure_future(read_one())
 
@@ -141,7 +164,11 @@ async def _run_answer_session():
         # how to draw itself.
         await _wait_for(lambda: "configuration" in received)
         configuration = received["configuration"]
-        assert configuration["eyes"] == ["right"]  # The default mono view.
+        assert configuration["tracks"] == [
+            "head-right",
+            "wrist-left",
+            "wrist-right",
+        ]
         assert configuration["calibration"] is True
         assert configuration["view_configuration"]["view"] == "mono"
 
@@ -165,6 +192,49 @@ async def _run_answer_session():
         assert received["frame"].width == 64
         assert received["frame"].height == 48
     finally:
+        await pc.close()
+        await server.close()
+
+
+def test_theta_and_wrist_peer_session(monkeypatch):
+    monkeypatch.setattr(
+        video,
+        "_view_configuration",
+        {"view": "theta360", "wrist_panels": {"enabled": True}},
+    )
+    jpeg = _encode_jpeg()
+    asyncio.run(_run_theta_and_wrist_peer_session(jpeg))
+
+
+async def _run_theta_and_wrist_peer_session(jpeg):
+    server = webrtc.WebRTCServer(
+        on_frame=lambda payload: None,
+        on_session_start=lambda: None,
+    )
+    received: dict = {}
+    pc, _xr = _browser_peer(received)
+    theta._event_loop = asyncio.get_running_loop()
+    try:
+        await _connect(server, pc, received)
+        assert received["configuration"]["tracks"] == [
+            "theta",
+            "wrist-left",
+            "wrist-right",
+        ]
+        deadline = time.monotonic() + 10.0
+        while len(received.get("video-frames", {})) < 3:
+            if time.monotonic() > deadline:
+                raise TimeoutError("not all THETA and wrist tracks arrived")
+            theta._publish(jpeg)
+            _push_wrist_jpeg("left", jpeg)
+            _push_wrist_jpeg("right", jpeg)
+            await asyncio.sleep(0.05)
+        assert all(
+            (frame.width, frame.height) == (64, 48)
+            for frame in received["video-frames"].values()
+        )
+    finally:
+        theta._event_loop = None
         await pc.close()
         await server.close()
 
@@ -352,7 +422,8 @@ async def _run_oneshot_timeout(server):
     try:
         async with tcp:
             pc.createDataChannel("xr")
-            pc.addTransceiver("video", direction="recvonly")
+            for _ in range(webrtc.VIDEO_TRANSCEIVERS):
+                pc.addTransceiver("video", direction="recvonly")
             await pc.setLocalDescription(await pc.createOffer())
             with pytest.raises(RuntimeError):
                 await server.negotiate_oneshot(pc.localDescription.sdp, host, port, 0.5)
@@ -394,6 +465,47 @@ def test_parse_ice_servers_malformed():
         webrtc.parse_ice_servers('{"urls": "stun:stun.example.com:3478"}')
     with pytest.raises(ValueError, match='"urls"'):
         webrtc.parse_ice_servers('[{"username": "user"}]')
+
+
+def test_theta_and_wrist_track_roles(monkeypatch):
+    monkeypatch.setattr(
+        video,
+        "_view_configuration",
+        {"view": "theta360", "wrist_panels": {"enabled": True}},
+    )
+    assert webrtc.track_roles() == ["theta", "wrist-left", "wrist-right"]
+
+
+def test_theta_track_without_wrist_panels(monkeypatch):
+    monkeypatch.setattr(
+        video,
+        "_view_configuration",
+        {"view": "theta360", "wrist_panels": {"enabled": False}},
+    )
+    assert webrtc.track_roles() == ["theta"]
+
+
+def test_all_theta_view_tracks_decode(monkeypatch):
+    monkeypatch.setattr(
+        video,
+        "_view_configuration",
+        {"view": "theta360", "wrist_panels": {"enabled": True}},
+    )
+    jpeg = _encode_jpeg()
+    theta._publish(jpeg)
+    _push_wrist_jpeg("left", jpeg)
+    _push_wrist_jpeg("right", jpeg)
+    asyncio.run(_decode_all_theta_view_tracks())
+
+
+async def _decode_all_theta_view_tracks():
+    clock = webrtc._SharedClock()
+    tracks = [
+        webrtc._JpegVideoTrack(role, clock) for role in webrtc.track_roles()
+    ]
+    frames = await asyncio.gather(*(track.recv() for track in tracks))
+    assert len(frames) == 3
+    assert all((frame.width, frame.height) == (64, 48) for frame in frames)
 
 
 def _capture_ice_servers(monkeypatch):

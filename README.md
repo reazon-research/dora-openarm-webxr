@@ -6,11 +6,13 @@ controller state of a VR device such as Meta Quest 3 or PICO 4 through
 and publishes them to a dora-rs dataflow. You can use it for OpenArm
 teleoperation with a VR device.
 
-Everything the VR device and this node say to each other rides one
-WebRTC peer connection: controller poses arrive on an unreliable data
-channel, and the head camera leaves on video tracks. Poses are dropped
-rather than retransmitted, because only the newest pose is worth
-anything to a robot.
+Pose, session control and camera media ride one WebRTC peer connection:
+controller poses arrive on an unreliable data channel, while the selected
+main view and both wrist cameras leave on separate video tracks. In the
+`theta360` view those tracks are `theta`, `wrist-left` and `wrist-right`.
+Poses are dropped rather than retransmitted, because only the newest pose is
+worth anything to a robot. Optional HUD telemetry still uses its lightweight
+WebSocket endpoint.
 
 ## Install
 
@@ -74,7 +76,10 @@ certificate is self-signed, the Web browser shows a security
 warning. You can continue to the page from its "Advanced" options.
 
 Press the "Start" button on the page to start teleoperation with your
-VR device.
+VR device. Until WebRTC is ready, the button shows signaling and ICE progress
+and stays disabled. The line below it reports the selected transport (`udp`,
+`tcp` or `unknown transport`) so a UDP test does not accidentally measure a
+TURN/TCP fallback.
 
 ## WebRTC-only mode
 
@@ -144,9 +149,9 @@ the view, and they are independent: `view` says how many images are
 drawn, `panel.lock` says what they hang off.
 
 `view` is `mono` (one image, from `camera_head_right`), `stereo` (one
-per eye, which also needs `camera_head_left`) or `none` (no camera at
-all: the operator sees the passthrough and only the controller poses are
-used).
+per eye, which also needs `camera_head_left`), `theta360` (the THETA
+equirectangular preview) or `none` (no main camera: the operator sees the
+passthrough, while enabled wrist cameras continue to be available).
 
 `panel.lock` is `room` (the panel stays where the headset was looking
 when the session started, so a head turn looks away from it) or `head`
@@ -185,7 +190,8 @@ JPEG frames received on `camera_wrist_left` and `camera_wrist_right` are shown
 as two small, head-locked panels at the left and right sides of the WebXR view.
 Each panel is rendered to both headset eyes; the side names identify the
 robot camera and panel position, not a headset eye. The wrist stream is
-independent of the main head-camera stream and does not delay pose messages.
+independent of the main view and does not delay pose messages. Each side is a
+separate WebRTC video track on the same peer connection as the pose channel.
 
 Wrist panels are enabled by default and remain invisible until their inputs
 provide frames. Their viewer-space placement can be tuned in the same view
@@ -332,6 +338,10 @@ The stereo view defaults to the right eye and offers left-eye and split-screen
 buttons. The THETA view is shown as its flat equirectangular preview. Since this
 page consumes the application's camera streams, it does not include the Quest
 passthrough background or Horizon OS interface.
+
+The monitor opens its own WebRTC peer and receives the same named video tracks
+as the headset. Camera frames are not duplicated onto the old `/video`,
+`/theta-video` or `/wrist-video` WebSocket endpoints.
 
 For example, wire an independently normalized waist signal into the
 WebXR node with:

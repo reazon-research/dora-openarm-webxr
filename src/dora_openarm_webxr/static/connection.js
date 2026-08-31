@@ -14,11 +14,10 @@
 
 // The browser half of the WebRTC connection to the node.
 //
-// Everything the headset and the node say to each other rides one peer
-// connection, so this page does not have to be served by the node. That
-// is the point: WebRTC needs no certificate from whoever answers, so the
-// node can sit on a LAN with no HTTPS server while the page comes from
-// somewhere that already has a certificate.
+// Pose, session control and camera media ride one peer connection, so the
+// WebXR page itself does not have to be served by the node. WebRTC needs no
+// certificate from whoever answers; separately hosted pages may provide any
+// optional application telemetry through their own service.
 //
 // Two data channels, split by what they can afford to lose. "xr" is
 // unordered and never retransmitted, and carries the frame messages at
@@ -37,11 +36,11 @@ const CONFIGURATION = {
   ],
 };
 
-// The node decides how many eyes it draws, but this page has to make the
-// offer before it can be told, and the signaling here is a single
-// exchange with no renegotiation. So always offer this many and let the
-// node leave the ones it does not use inactive.
-const VIDEO_TRANSCEIVERS = 2;
+// The page makes its offer before the node can push the view configuration.
+// Four slots cover the largest layout: stereo head video and two wrist views.
+// THETA replaces the head view and uses three slots in total. The node leaves
+// unused transceivers inactive.
+const VIDEO_TRANSCEIVERS = 4;
 
 // Signaling for the node's own HTTPS server: one POST, because both
 // sides gather all their ICE candidates before exchanging anything.
@@ -52,7 +51,7 @@ async function postOffer(sdp) {
     body: JSON.stringify({ sdp: sdp }),
   });
   if (!response.ok) {
-    throw new Error("signaling failed: " + response.status);
+    throw new Error(`signaling failed: ${response.status}`);
   }
   const answer = await response.json();
   return answer.sdp;
@@ -73,14 +72,40 @@ function gathered(pc) {
   });
 }
 
+async function selectedProtocol(pc) {
+  try {
+    const stats = await pc.getStats();
+    let pair = null;
+    for (const report of stats.values()) {
+      if (report.type === "transport" && report.selectedCandidatePairId) {
+        pair = stats.get(report.selectedCandidatePairId);
+        break;
+      }
+      if (
+        report.type === "candidate-pair" &&
+        report.state === "succeeded" &&
+        report.nominated
+      ) {
+        pair = report;
+      }
+    }
+    const local = pair ? stats.get(pair.localCandidateId) : null;
+    const remote = pair ? stats.get(pair.remoteCandidateId) : null;
+    return local?.protocol || remote?.protocol || "unknown transport";
+  } catch (_error) {
+    return "unknown transport";
+  }
+}
+
 // Connect to the node and resolve once it has said how to draw itself.
 //
 // `signal` takes the offer SDP and resolves with the answer SDP, so a
 // differently hosted page can broker signaling its own way without
 // changing anything else here.
-export async function connect({ signal = postOffer } = {}) {
+export async function connect({ signal = postOffer, onState = () => {} } = {}) {
   const pc = new RTCPeerConnection(CONFIGURATION);
   const received = [];
+  const trackWaiters = [];
   const handlers = { calibrationResult: null, close: null };
   let control = null;
   let sequence = 0;
@@ -96,11 +121,37 @@ export async function connect({ signal = postOffer } = {}) {
   }
 
   pc.addEventListener("track", (event) => {
-    // Keyed by mid, because the eye a track carries is decided by
-    // negotiation order and the node names that order in its
-    // configuration message.
+    // Keyed by mid, because the role a track carries is decided by negotiation
+    // order and the node names that order in its configuration message.
     received.push({ mid: Number(event.transceiver.mid), track: event.track });
+    for (const waiter of trackWaiters.splice(0)) {
+      waiter();
+    }
   });
+
+  function waitForTracks(count) {
+    if (received.length >= count) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () =>
+          reject(
+            new Error(`received ${received.length}/${count} video tracks`),
+          ),
+        10000,
+      );
+      const check = () => {
+        if (received.length >= count) {
+          clearTimeout(timeout);
+          resolve();
+        } else {
+          trackWaiters.push(check);
+        }
+      };
+      trackWaiters.push(check);
+    });
+  }
 
   const configured = new Promise((resolve, reject) => {
     // The node going away is noticed in two ways, and either must end
@@ -127,7 +178,7 @@ export async function connect({ signal = postOffer } = {}) {
         try {
           payload = JSON.parse(message.data);
         } catch (error) {
-          console.error("cannot read a message from the node: " + error);
+          console.error(`cannot read a message from the node: ${error}`);
           return;
         }
         if (payload.type === "configuration") {
@@ -146,50 +197,70 @@ export async function connect({ signal = postOffer } = {}) {
     });
   });
 
-  await pc.setLocalDescription(await pc.createOffer());
-  await gathered(pc);
-  const answer = await signal(pc.localDescription.sdp);
-  await pc.setRemoteDescription({ type: "answer", sdp: answer });
+  try {
+    onState("Creating WebRTC offer…");
+    await pc.setLocalDescription(await pc.createOffer());
+    onState("Gathering ICE candidates…");
+    await gathered(pc);
+    onState("Exchanging WebRTC offer…");
+    const answer = await signal(pc.localDescription.sdp);
+    await pc.setRemoteDescription({ type: "answer", sdp: answer });
 
-  const payload = await configured;
-  // The node names the eyes in track order, so a lone track in the mono
-  // view is never mistaken for the left eye.
-  received.sort((a, b) => a.mid - b.mid);
-  const tracks = {};
-  payload.eyes.forEach((eye, index) => {
-    if (received[index]) {
-      tracks[eye] = received[index].track;
-    }
-  });
+    onState("Opening WebRTC channels…");
+    const payload = await configured;
+    const roles =
+      payload.tracks || (payload.eyes || []).map((eye) => `head-${eye}`);
+    await waitForTracks(roles.length);
+    // The node names the roles in negotiation order; sorting by mid restores
+    // that order even when the browser dispatched track events independently.
+    received.sort((a, b) => a.mid - b.mid);
+    const tracks = {};
+    roles.forEach((role, index) => {
+      if (received[index]) {
+        tracks[role] = received[index].track;
+        // Preserve upstream's eye aliases for the mono/stereo panel modules.
+        if (role.startsWith("head-")) {
+          tracks[role.slice("head-".length)] = received[index].track;
+        }
+      }
+    });
+    const protocol = await selectedProtocol(pc);
+    onState(`WebRTC connected (${protocol})`);
 
-  return {
-    configuration: payload.view_configuration,
-    calibration: { enabled: payload.calibration === true },
-    eyes: payload.eyes,
-    tracks: tracks,
-    // Frames are numbered here so the node can drop the ones this
-    // unordered channel delivers late.
-    sendFrame(message) {
-      if (xr.readyState !== "open") {
-        return;
-      }
-      sequence += 1;
-      xr.send(JSON.stringify({ ...message, sequence }));
-    },
-    sendControl(message) {
-      if (control && control.readyState === "open") {
-        control.send(JSON.stringify(message));
-      }
-    },
-    onCalibrationResult(handler) {
-      handlers.calibrationResult = handler;
-    },
-    onClose(handler) {
-      handlers.close = handler;
-    },
-    close() {
-      closed = true;
-      pc.close();
-    },
-  };
+    return {
+      configuration: payload.view_configuration,
+      calibration: { enabled: payload.calibration === true },
+      protocol: protocol,
+      roles: roles,
+      tracks: tracks,
+      // Frames are numbered here so the node can drop the ones this
+      // unordered channel delivers late.
+      sendFrame(message) {
+        if (xr.readyState !== "open") {
+          return;
+        }
+        sequence += 1;
+        xr.send(JSON.stringify({ ...message, sequence }));
+      },
+      sendControl(message) {
+        if (control && control.readyState === "open") {
+          control.send(JSON.stringify(message));
+        }
+      },
+      onCalibrationResult(handler) {
+        handlers.calibrationResult = handler;
+      },
+      onClose(handler) {
+        handlers.close = handler;
+      },
+      close() {
+        closed = true;
+        pc.close();
+      },
+    };
+  } catch (error) {
+    closed = true;
+    pc.close();
+    throw error;
+  }
 }

@@ -5,6 +5,7 @@
 
 """Tests for THETA board-temperature parsing and HUD state."""
 
+import asyncio
 import unittest
 
 from dora_openarm_webxr import hud, theta
@@ -40,6 +41,15 @@ class ThetaTemperatureTest(unittest.TestCase):
         self.assertEqual(hud._board_temperature, 31.0)
         self.assertFalse(hud.set_board_temperature(31))
         self.assertFalse(hud.set_board_temperature(float("inf")))
+
+    def test_webrtc_source_skips_to_latest_panorama(self):
+        """Expose the retained THETA JPEG to its WebRTC video track."""
+        theta.reset()
+        theta._publish(b"one")
+        theta._publish(b"two")
+        frame, sequence = asyncio.run(theta.wait_next(0))
+        self.assertEqual(frame, b"two")
+        self.assertEqual(sequence, 2)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,6 @@ import os
 import threading
 
 import requests
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from requests.auth import HTTPDigestAuth
 
 _configuration: dict = {}
@@ -201,30 +200,34 @@ async def stop() -> None:
     _event_loop = None
 
 
-def register_routes(app: FastAPI, should_exit) -> None:
-    """Register the binary latest-frame WebSocket before the static mount."""
+async def wait_next(seen_sequence: int) -> tuple[bytes, int]:
+    """Wait for a THETA JPEG newer than ``seen_sequence``.
 
-    @app.websocket("/theta-video")
-    async def _theta_video_endpoint(websocket: WebSocket):
-        await websocket.accept()
-        sent = -1
-        try:
-            while not should_exit():
-                event = _frame_event
-                if event is None:
-                    await asyncio.sleep(0.1)
-                    continue
-                try:
-                    await asyncio.wait_for(event.wait(), timeout=1.0)
-                except TimeoutError:
-                    continue
-                event.clear()
-                with _frame_lock:
-                    frame, sequence = _latest_frame, _sequence
-                if frame is None or sequence == sent:
-                    continue
-                sent = sequence
-                await websocket.send_bytes(frame)
-            await websocket.close()
-        except WebSocketDisconnect:
-            pass
+    The capture thread keeps a single replaceable frame. Every WebRTC encoder
+    therefore skips directly to the newest panorama instead of growing a queue.
+    """
+    while True:
+        with _frame_lock:
+            frame, sequence = _latest_frame, _sequence
+        if frame is not None and sequence != seen_sequence:
+            return frame, sequence
+
+        event = _frame_event
+        if event is None:
+            await asyncio.sleep(0.1)
+            continue
+        event.clear()
+        # Close the race between reading the sequence and clearing the event.
+        with _frame_lock:
+            if _latest_frame is not None and _sequence != seen_sequence:
+                continue
+        await event.wait()
+
+
+def reset() -> None:
+    """Forget the retained panorama. Used by tests that reuse the module."""
+    global _frame_event, _latest_frame, _sequence
+    with _frame_lock:
+        _latest_frame = None
+        _sequence = 0
+    _frame_event = asyncio.Event()

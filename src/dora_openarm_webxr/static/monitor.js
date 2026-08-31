@@ -3,32 +3,16 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
+import { connect } from "./connection.js";
 import { createHudPanel } from "./hud.js";
 
-const EYE_BY_PREFIX = { 0: "left", 1: "right" };
 const states = {
-  left: {
-    canvas: document.getElementById("left-video"),
-    queued: null,
-    decoding: false,
-  },
-  right: {
-    canvas: document.getElementById("right-video"),
-    queued: null,
-    decoding: false,
-  },
+  left: { canvas: document.getElementById("left-video"), video: null },
+  right: { canvas: document.getElementById("right-video"), video: null },
 };
 const wristStates = {
-  left: {
-    canvas: document.getElementById("wrist-left-video"),
-    queued: null,
-    decoding: false,
-  },
-  right: {
-    canvas: document.getElementById("wrist-right-video"),
-    queued: null,
-    decoding: false,
-  },
+  left: { canvas: document.getElementById("wrist-left-video"), video: null },
+  right: { canvas: document.getElementById("wrist-right-video"), video: null },
 };
 
 const status = document.getElementById("status");
@@ -39,14 +23,10 @@ const hud = createHudPanel({ clears: false });
 document.getElementById("hud").append(...hud.canvases);
 
 let stopped = false;
-const sockets = new Set();
-const reconnectTimers = new Set();
+let connection = null;
+let reconnectTimer = null;
 let receivedFrame = false;
-
-function websocketUrl(path) {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${location.host}${path}`;
-}
+let selectedProtocol = "unknown transport";
 
 function renderHud(now) {
   hud.updateCanvas(now);
@@ -54,84 +34,73 @@ function renderHud(now) {
 }
 requestAnimationFrame(renderHud);
 
-function decodeLatest(state) {
-  if (state.decoding || !state.queued || stopped) {
+function detachVideo(state) {
+  if (!state.video) {
     return;
   }
-  const jpeg = state.queued;
-  state.queued = null;
-  state.decoding = true;
-  createImageBitmap(jpeg)
-    .then((bitmap) => {
-      if (stopped) {
-        bitmap.close();
-        return;
-      }
-      const canvas = state.canvas;
-      if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-      }
-      canvas.getContext("2d").drawImage(bitmap, 0, 0);
-      bitmap.close();
-      state.onFrame();
-    })
-    .catch(() => {
-      if (state.reportsErrors) {
-        status.textContent = "Could not decode a camera frame";
-      }
-    })
-    .finally(() => {
-      state.decoding = false;
-      decodeLatest(state);
-    });
+  state.cancelFrame?.();
+  state.video.pause();
+  state.video.srcObject = null;
+  state.video = null;
+  state.cancelFrame = null;
 }
 
-function queueFrame(group, name, bytes, onFrame, reportsErrors = false) {
-  const state = group[name];
-  if (!state) {
-    return;
-  }
-  // One replaceable slot prevents a slow desktop decoder accumulating delay.
-  state.queued = new Blob([bytes], { type: "image/jpeg" });
-  state.onFrame = onFrame;
-  state.reportsErrors = reportsErrors;
-  decodeLatest(state);
-}
-
-function connectVideo(path, receive, { reportsStatus = true } = {}) {
-  if (stopped) {
-    return;
-  }
-  if (reportsStatus) {
-    status.textContent = "Connecting…";
-  }
-  const websocket = new WebSocket(websocketUrl(path));
-  websocket.binaryType = "arraybuffer";
-  websocket.addEventListener("open", () => {
-    if (reportsStatus) {
-      status.textContent = receivedFrame
-        ? "Live"
-        : "Connected — waiting for video";
+function detachAllVideos() {
+  for (const group of [states, wristStates]) {
+    for (const state of Object.values(group)) {
+      detachVideo(state);
     }
-  });
-  websocket.addEventListener("message", receive);
-  websocket.addEventListener("close", () => {
-    sockets.delete(websocket);
-    if (stopped) {
+  }
+}
+
+function attachVideo(state, track, onFrame) {
+  if (!track) {
+    return;
+  }
+  detachVideo(state);
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.srcObject = new MediaStream([track]);
+  state.video = video;
+
+  const draw = () => {
+    if (stopped || state.video !== video || video.readyState < 2) {
       return;
     }
-    if (reportsStatus) {
-      status.textContent = "Video disconnected — reconnecting…";
+    const canvas = state.canvas;
+    if (
+      canvas.width !== video.videoWidth ||
+      canvas.height !== video.videoHeight
+    ) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
     }
-    const timer = setTimeout(() => {
-      reconnectTimers.delete(timer);
-      connectVideo(path, receive, { reportsStatus });
-    }, 1000);
-    reconnectTimers.add(timer);
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    onFrame();
+  };
+
+  if ("requestVideoFrameCallback" in video) {
+    let request = null;
+    const onVideoFrame = () => {
+      draw();
+      request = video.requestVideoFrameCallback(onVideoFrame);
+    };
+    request = video.requestVideoFrameCallback(onVideoFrame);
+    state.cancelFrame = () => video.cancelVideoFrameCallback(request);
+  } else {
+    let request = null;
+    const onAnimationFrame = () => {
+      draw();
+      request = requestAnimationFrame(onAnimationFrame);
+    };
+    request = requestAnimationFrame(onAnimationFrame);
+    state.cancelFrame = () => cancelAnimationFrame(request);
+  }
+  video.play().catch((error) => {
+    status.textContent = `Could not play WebRTC video: ${error}`;
   });
-  websocket.addEventListener("error", () => websocket.close());
-  sockets.add(websocket);
 }
 
 function showCameraFrame() {
@@ -139,30 +108,11 @@ function showCameraFrame() {
     receivedFrame = true;
     placeholder.hidden = true;
   }
-  status.textContent = "Live";
+  status.textContent = `Live over WebRTC (${selectedProtocol})`;
 }
 
-function receiveCameraFrame(event) {
-  const message = new Uint8Array(event.data);
-  const eye = EYE_BY_PREFIX[message[0]];
-  if (eye) {
-    queueFrame(states, eye, message.subarray(1), showCameraFrame, true);
-  }
-}
-
-function receivePanoramaFrame(event) {
-  queueFrame(states, "right", event.data, showCameraFrame, true);
-}
-
-function receiveWristFrame(event) {
-  const message = new Uint8Array(event.data);
-  const side = EYE_BY_PREFIX[message[0]];
-  if (side && message.length > 1) {
-    const state = wristStates[side];
-    queueFrame(wristStates, side, message.subarray(1), () => {
-      state.canvas.hidden = false;
-    });
-  }
+function showWristFrame(side) {
+  wristStates[side].canvas.hidden = false;
 }
 
 function selectLayout(layout) {
@@ -180,46 +130,87 @@ document.getElementById("fullscreen").addEventListener("click", () => {
   document.documentElement.requestFullscreen().catch(() => {});
 });
 
-fetch("/view_configuration")
-  .then((response) => {
-    if (!response.ok) {
-      throw new Error(`configuration request failed: ${response.status}`);
+function applyTracks(opened) {
+  const configuration = opened.configuration;
+  const tracks = opened.tracks;
+  selectedProtocol = opened.protocol;
+  receivedFrame = false;
+  placeholder.hidden = false;
+  videoGrid.hidden = false;
+  status.textContent = `WebRTC connected (${selectedProtocol}) — waiting for video`;
+
+  if (configuration.wrist_panels?.enabled !== false) {
+    for (const side of ["left", "right"]) {
+      attachVideo(wristStates[side], tracks[`wrist-${side}`], () =>
+        showWristFrame(side),
+      );
     }
-    return response.json();
-  })
-  .then((configuration) => {
-    if (configuration.wrist_panels?.enabled !== false) {
-      connectVideo("/wrist-video", receiveWristFrame, {
-        reportsStatus: false,
-      });
+  }
+
+  if (configuration.view === "theta360") {
+    selectLayout("panorama");
+    placeholder.textContent = "Waiting for a THETA 360 frame…";
+    attachVideo(states.right, tracks.theta, showCameraFrame);
+  } else if (configuration.view === "none") {
+    placeholder.textContent = "This session has no main camera view. HUD only.";
+    status.textContent = `WebRTC connected (${selectedProtocol}) — HUD and wrist views`;
+  } else {
+    const stereo = configuration.view === "stereo";
+    eyeControls.hidden = !stereo;
+    selectLayout("right");
+    attachVideo(states.right, tracks["head-right"], showCameraFrame);
+    if (stereo) {
+      attachVideo(states.left, tracks["head-left"], showCameraFrame);
     }
-    if (configuration.view === "theta360") {
-      selectLayout("panorama");
-      placeholder.textContent = "Waiting for a THETA 360 frame…";
-      connectVideo("/theta-video", receivePanoramaFrame);
-    } else if (configuration.view === "none") {
-      videoGrid.hidden = true;
-      placeholder.textContent = "This session has no camera view. HUD only.";
-      status.textContent = "HUD monitor";
-    } else {
-      const stereo = configuration.view === "stereo";
-      eyeControls.hidden = !stereo;
-      selectLayout("right");
-      connectVideo("/video", receiveCameraFrame);
+  }
+}
+
+function scheduleReconnect(message) {
+  if (stopped || reconnectTimer !== null) {
+    return;
+  }
+  status.textContent = message;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectMonitor();
+  }, 1000);
+}
+
+async function connectMonitor() {
+  status.textContent = "Connecting WebRTC…";
+  try {
+    const opened = await connect({
+      onState: (state) => {
+        status.textContent = state;
+      },
+    });
+    if (stopped) {
+      opened.close();
+      return;
     }
-  })
-  .catch((error) => {
-    status.textContent = "Could not load the view configuration";
-    placeholder.textContent = error.message;
-  });
+    connection = opened;
+    opened.onClose(() => {
+      if (connection !== opened) {
+        return;
+      }
+      connection = null;
+      detachAllVideos();
+      scheduleReconnect("WebRTC disconnected — reconnecting…");
+    });
+    applyTracks(opened);
+  } catch (error) {
+    scheduleReconnect(`WebRTC connection failed: ${error}`);
+  }
+}
+
+connectMonitor();
 
 window.addEventListener("beforeunload", () => {
   stopped = true;
-  for (const timer of reconnectTimers) {
-    clearTimeout(timer);
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
   }
-  for (const socket of sockets) {
-    socket.close();
-  }
+  detachAllVideos();
+  connection?.close();
   hud.close();
 });

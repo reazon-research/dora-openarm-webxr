@@ -15,8 +15,9 @@
 """WebXR server node for OpenArm teleoperation.
 
 This dora-rs node talks WebRTC with a VR device such as Meta Quest 3 or
-PICO 4. Controller poses arrive on an unreliable data channel and head
-camera frames leave on video tracks; :mod:`.webrtc` owns that half.
+PICO 4. Controller poses arrive on an unreliable data channel and head,
+THETA or wrist-camera frames leave on named video tracks; :mod:`.webrtc`
+owns that half.
 For each frame received from the device, it converts the controller
 pose from WebXR coordinates into the OpenArm workspace, smooths it with
 a One Euro filter, and publishes the pose, trigger, joystick and button
@@ -699,11 +700,9 @@ async def _offer_endpoint(offer: dict):
     return {"sdp": await webrtc_server.answer(offer["sdp"]), "type": "answer"}
 
 
-# Camera, HUD and THETA routes are registered before the static files are mounted
-# on "/" because the mount matches every remaining path.
-video.register_routes(app, lambda: server.should_exit)
+# The HUD route is registered before the static files are mounted on "/"
+# because the mount matches every remaining path. Camera frames use WebRTC.
 hud.register_routes(app, lambda: server.should_exit)
-theta.register_routes(app, lambda: server.should_exit)
 
 
 base_dir = os.path.dirname(__file__)
@@ -813,20 +812,15 @@ async def _main_hosted():
     global server
     server = uvicorn.Server(config)
 
-    theta.start(hud.set_board_temperature)
-
     task_uvicorn = asyncio.create_task(_main_uvicorn())
     task_dora = asyncio.create_task(_main_dora())
-    try:
-        await task_dora
-        # The peers are closed before uvicorn is waited on: its graceful
-        # shutdown can sit on a browser's idle keep-alive sockets, and the
-        # headset must hear the close -- and end its session -- without
-        # waiting behind that.
-        await webrtc_server.close()
-        await task_uvicorn
-    finally:
-        await theta.stop()
+    await task_dora
+    # The peers are closed before uvicorn is waited on: its graceful
+    # shutdown can sit on a browser's idle keep-alive sockets, and the
+    # headset must hear the close -- and end its session -- without
+    # waiting behind that.
+    await webrtc_server.close()
+    await task_uvicorn
 
 
 async def _main_webrtc_only():
@@ -862,10 +856,14 @@ async def _main_async():
         calibration_enabled=_CALIBRATION_ENABLED,
         ice_servers=_ICE_SERVERS,
     )
-    if args.offer:
-        await _main_webrtc_only()
-    else:
-        await _main_hosted()
+    theta.start(hud.set_board_temperature)
+    try:
+        if args.offer:
+            await _main_webrtc_only()
+        else:
+            await _main_hosted()
+    finally:
+        await theta.stop()
 
 
 def _answer_port_default():

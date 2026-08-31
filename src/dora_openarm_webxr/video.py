@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Camera video downlinks for the WebXR front-end.
+"""Dora camera inputs for WebRTC video tracks.
 
-Takes JPEG images from the robot's head and wrist cameras and forwards
-them to the VR device. The head image is the main camera view; the wrist
-images are drawn as small head-locked panels at the left and right sides.
+Keeps only the newest JPEG from the robot's head and wrist cameras. WebRTC
+tracks consume those frames independently, so a slow encoder skips stale
+frames instead of building latency.
 
-Frames leave on their own WebRTC video track, one per eye, so they never
-delay the pose messages that feed IK. This module only keeps the newest
-frame per eye; :mod:`.webrtc` owns the tracks that encode them. How the
-panel is placed is tuned in ``example/view_camera.yaml``.
+The head image is the main camera view; the wrist images are drawn as small
+head-locked panels at the left and right sides. :mod:`.webrtc` owns the tracks
+that encode them. How the panels are placed is tuned in the view configuration.
 """
 
 import argparse
@@ -30,7 +29,6 @@ import os
 import pathlib
 
 import yaml
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 # dora-rs input IDs mapped to the eye that the frame is rendered on.
 # The default mono view uses only the right eye; the stereo view uses
@@ -46,10 +44,6 @@ WRIST_CAMERA_INPUTS = {
     "camera_wrist_left": "left",
     "camera_wrist_right": "right",
 }
-
-# Each wrist frame is sent as a binary WebSocket message prefixed with one
-# byte identifying its panel side, then the JPEG.
-CAMERA_PREFIX = {"left": b"\x00", "right": b"\x01"}
 
 # Used when no --view-configuration-file is given.
 DEFAULT_VIEW_CONFIGURATION: dict = {
@@ -75,7 +69,7 @@ _events: dict = {"left": asyncio.Event(), "right": asyncio.Event()}
 
 _wrist_frames: dict = {"left": None, "right": None}
 _wrist_sequences: dict = {"left": 0, "right": 0}
-_wrist_frame_event = asyncio.Event()
+_wrist_events: dict = {"left": asyncio.Event(), "right": asyncio.Event()}
 
 _view_configuration: dict = DEFAULT_VIEW_CONFIGURATION
 
@@ -115,17 +109,26 @@ def view_configuration() -> dict:
 def eyes() -> list:
     """Return the eyes this view draws, in track negotiation order.
 
-    ``none`` shows no camera at all, ``stereo`` draws one image per eye,
-    and everything else -- ``mono`` included -- draws the right one only.
+    ``none`` and ``theta360`` use no head camera, ``stereo`` draws one image
+    per eye, and everything else -- ``mono`` included -- draws the right one.
     The order is fixed because the browser tells the tracks apart by the
     order they were negotiated in.
     """
     view = _view_configuration.get("view")
-    if view == "none":
+    if view in ("none", "theta360"):
         return []
     if view == "stereo":
         return ["left", "right"]
     return ["right"]
+
+
+def track_roles() -> list[str]:
+    """Return the active Dora-camera WebRTC roles in negotiation order."""
+    roles = [f"head-{eye}" for eye in eyes()]
+    wrist = _view_configuration.get("wrist_panels") or {}
+    if wrist.get("enabled", True):
+        roles.extend(["wrist-left", "wrist-right"])
+    return roles
 
 
 def handle_event(event) -> bool:
@@ -144,7 +147,7 @@ def handle_event(event) -> bool:
         side = WRIST_CAMERA_INPUTS[camera_id]
         _wrist_frames[side] = event["value"].to_numpy(zero_copy_only=False).tobytes()
         _wrist_sequences[side] += 1
-        _wrist_frame_event.set()
+        _wrist_events[side].set()
         return True
     return False
 
@@ -162,39 +165,22 @@ async def wait_next(eye: str, seen_sequence: int) -> tuple:
     return _frames[eye], _sequences[eye]
 
 
-def register_routes(app: FastAPI, should_exit) -> None:
-    """Register the wrist-camera WebSocket on the node's Web application."""
+async def wait_next_wrist(side: str, seen_sequence: int) -> tuple:
+    """Wait for the newest wrist JPEG on ``side``."""
+    while _wrist_sequences[side] == seen_sequence:
+        _wrist_events[side].clear()
+        await _wrist_events[side].wait()
+    return _wrist_frames[side], _wrist_sequences[side]
 
-    @app.websocket("/wrist-video")
-    async def _wrist_video_endpoint(websocket: WebSocket):
-        """Send each wrist's newest JPEG without delaying pose messages."""
-        await websocket.accept()
-        sides = ["left", "right"]
-        sent = {side: -1 for side in sides}
-        try:
-            while not should_exit():
-                sent_frame = False
-                for side in sides:
-                    if (
-                        _wrist_frames[side] is None
-                        or _wrist_sequences[side] == sent[side]
-                    ):
-                        continue
-                    sent[side] = _wrist_sequences[side]
-                    await websocket.send_bytes(
-                        CAMERA_PREFIX[side] + _wrist_frames[side]
-                    )
-                    sent_frame = True
-                if sent_frame:
-                    continue
-                try:
-                    await asyncio.wait_for(_wrist_frame_event.wait(), timeout=1.0)
-                except TimeoutError:
-                    continue
-                _wrist_frame_event.clear()
-            await websocket.close()
-        except WebSocketDisconnect:
-            pass
+
+async def wait_next_role(role: str, seen_sequence: int) -> tuple:
+    """Wait for the newest JPEG belonging to a negotiated track role."""
+    group, side = role.split("-", 1)
+    if group == "head":
+        return await wait_next(side, seen_sequence)
+    if group == "wrist":
+        return await wait_next_wrist(side, seen_sequence)
+    raise ValueError(f"unknown video track role: {role}")
 
 
 def reset() -> None:
@@ -203,8 +189,7 @@ def reset() -> None:
         _frames[eye] = None
         _sequences[eye] = 0
         _events[eye] = asyncio.Event()
-    global _wrist_frame_event
     for side in _wrist_frames:
         _wrist_frames[side] = None
         _wrist_sequences[side] = 0
-    _wrist_frame_event = asyncio.Event()
+        _wrist_events[side] = asyncio.Event()

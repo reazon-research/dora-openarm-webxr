@@ -29,6 +29,8 @@ dependencies = [
   "requests",
   "scipy",
   "uvicorn",
+  # The camera streams use WebRTC, but HUD telemetry remains a WebSocket.
+  "websockets",
 ]
 
 [project.urls]

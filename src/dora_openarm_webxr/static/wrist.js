@@ -7,6 +7,8 @@
 // panel is rendered into both headset eyes; "left" and "right" describe the
 // panel positions and robot cameras, not the headset eyes.
 
+import { createVideoSource } from "./video-source.js";
+
 const VERTEX_SHADER = `
 attribute vec2 a_corner;
 uniform mat4 u_projection;
@@ -32,9 +34,7 @@ void main() {
 }
 `;
 
-// Must match CAMERA_PREFIX in video.py.
 const SIDES = ["left", "right"];
-const SIDE_BY_PREFIX = { 0: "left", 1: "right" };
 const DEFAULT_PANEL = {
   // Matches PANEL_DISTANCE in hud.js: every head-locked element shares one
   // plane, so the eyes never reverge moving between them.
@@ -106,16 +106,13 @@ class WristPanels {
   #corner = null;
   #uniforms = {};
   #textures = {};
-  #pending = { left: null, right: null };
+  #sources = { left: null, right: null };
   #sizes = {
     left: { width: 0, height: 0 },
     right: { width: 0, height: 0 },
   };
-  #decodeSequences = { left: 0, right: 0 };
   #configuration = null;
   #clears = false;
-  #websocket = null;
-  #closed = false;
   // Null until a gripper-mode node publishes. Nothing is drawn until then, so
   // a dataflow without that node shows the videos exactly as before.
   #gripperName = null;
@@ -125,34 +122,13 @@ class WristPanels {
   #captionTexture = null;
   #captionStale = false;
 
-  constructor(configuration, { clears }) {
+  constructor(configuration, tracks, { clears }) {
     this.#configuration = configuration.wrist_panels || {};
     this.#clears = clears;
-
-    const websocket = new WebSocket(`wss://${location.host}/wrist-video`);
-    websocket.binaryType = "arraybuffer";
-    websocket.addEventListener("message", (event) => {
-      const message = new Uint8Array(event.data);
-      const side = SIDE_BY_PREFIX[message[0]];
-      if (!side || message.length < 2) {
-        return;
-      }
-      const sequence = ++this.#decodeSequences[side];
-      const jpeg = message.subarray(1);
-      createImageBitmap(new Blob([jpeg], { type: "image/jpeg" }))
-        .then((bitmap) => {
-          if (this.#closed || sequence !== this.#decodeSequences[side]) {
-            bitmap.close();
-            return;
-          }
-          if (this.#pending[side]) {
-            this.#pending[side].close();
-          }
-          this.#pending[side] = bitmap;
-        })
-        .catch(() => {});
-    });
-    this.#websocket = websocket;
+    for (const side of SIDES) {
+      const track = tracks?.[`wrist-${side}`];
+      this.#sources[side] = track ? createVideoSource(track) : null;
+    }
   }
 
   setGripperMode(name, speedRadS, torqueNm) {
@@ -273,22 +249,14 @@ class WristPanels {
     const gl = this.#gl;
     gl.activeTexture(gl.TEXTURE0);
     for (const side of SIDES) {
-      const bitmap = this.#pending[side];
-      if (!bitmap) {
+      const source = this.#sources[side];
+      if (!source) {
         continue;
       }
-      gl.bindTexture(gl.TEXTURE_2D, this.#textures[side]);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        bitmap,
-      );
-      this.#sizes[side] = { width: bitmap.width, height: bitmap.height };
-      bitmap.close();
-      this.#pending[side] = null;
+      const size = source.upload(gl, this.#textures[side]);
+      if (size) {
+        this.#sizes[side] = size;
+      }
     }
   }
 
@@ -399,21 +367,15 @@ class WristPanels {
   }
 
   close() {
-    this.#closed = true;
-    if (this.#websocket) {
-      this.#websocket.close();
-      this.#websocket = null;
-    }
     for (const side of SIDES) {
-      this.#decodeSequences[side] += 1;
-      if (this.#pending[side]) {
-        this.#pending[side].close();
-        this.#pending[side] = null;
+      if (this.#sources[side]) {
+        this.#sources[side].close();
+        this.#sources[side] = null;
       }
     }
   }
 }
 
-export function createWristPanels(configuration, options) {
-  return new WristPanels(configuration, options);
+export function createWristPanels(configuration, tracks, options) {
+  return new WristPanels(configuration, tracks, options);
 }
