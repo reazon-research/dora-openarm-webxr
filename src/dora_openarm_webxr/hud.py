@@ -121,6 +121,8 @@ _gripper_name: str | None = None
 _gripper_speed: float | None = None
 _gripper_torque: float | None = None
 _gripper_sequence = 0
+_board_temperature: float | None = None
+_board_temperature_sequence = 0
 _state_event = asyncio.Event()
 
 
@@ -279,6 +281,24 @@ def handle_timer_action(action: object) -> bool:
     return True
 
 
+def set_board_temperature(value: float) -> bool:
+    """Keep the latest THETA main-board temperature in degrees Celsius."""
+    try:
+        temperature = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(temperature) or not -10.0 <= temperature <= 100.0:
+        return False
+
+    global _board_temperature, _board_temperature_sequence
+    if temperature == _board_temperature:
+        return False
+    _board_temperature = temperature
+    _board_temperature_sequence += 1
+    _state_event.set()
+    return True
+
+
 def _pose_stream():
     """Return every rate-limited pose value as (message type, value, sequence).
 
@@ -304,6 +324,7 @@ def register_routes(app: FastAPI, should_exit) -> None:
         pose_sent: dict[str, int] = {}
         mode_sent = -1
         gripper_sent = -1
+        temperature_sent = -1
         timer_sent = -1
         last_sent_at = 0.0
         loop = asyncio.get_running_loop()
@@ -355,6 +376,18 @@ def register_routes(app: FastAPI, should_exit) -> None:
                             "name": _gripper_name,
                             "speed_rad_s": _gripper_speed,
                             "torque_nm": _gripper_torque,
+                        }
+                    )
+                    sent = True
+                if (
+                    _board_temperature is not None
+                    and _board_temperature_sequence != temperature_sent
+                ):
+                    temperature_sent = _board_temperature_sequence
+                    await websocket.send_json(
+                        {
+                            "type": "theta-board-temperature",
+                            "value_celsius": _board_temperature,
                         }
                     )
                     sent = True

@@ -813,7 +813,7 @@ async def _main_hosted():
     global server
     server = uvicorn.Server(config)
 
-    theta.start()
+    theta.start(hud.set_board_temperature)
 
     task_uvicorn = asyncio.create_task(_main_uvicorn())
     task_dora = asyncio.create_task(_main_dora())

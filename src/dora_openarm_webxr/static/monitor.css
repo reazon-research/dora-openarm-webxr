@@ -222,6 +222,11 @@ button.selected {
   transform: translateX(-50%);
 }
 
+.hud .temperature {
+  right: 1.25rem;
+  width: clamp(8rem, 11vw, 11rem);
+}
+
 /* Bottom center, mirroring the timer above, as in the headset. */
 .hud .robot {
   top: auto;
@@ -250,6 +255,11 @@ button.selected {
 
   .hud .timer {
     width: min(9rem, 36vw);
+  }
+
+  .hud .temperature {
+    right: 0.75rem;
+    width: min(7.5rem, 30vw);
   }
 
   .hud .robot {
