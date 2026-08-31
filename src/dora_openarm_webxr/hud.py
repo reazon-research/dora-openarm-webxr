@@ -6,14 +6,13 @@
 """Forward synchronized telemetry to the WebXR HUD and desktop monitor."""
 
 import asyncio
-from collections.abc import Callable
 import math
 import os
 import sys
 import time
+from collections.abc import Callable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-
 
 LIFTER_HEIGHT_INPUT = "waist_height"
 WAIST_ANGLE_INPUT = "waist_angle"
@@ -64,8 +63,7 @@ def _full_scale(name, default):
         value = math.nan
     if not math.isfinite(value) or value <= 0.0:
         print(
-            f"{name}={raw!r} is not a positive number; "
-            f"falling back on {default}",
+            f"{name}={raw!r} is not a positive number; falling back on {default}",
             file=sys.stderr,
             flush=True,
         )
@@ -101,9 +99,7 @@ def _sign_scale(name):
 
 
 _waist_height_full_scale = _full_scale("WAIST_HEIGHT_FULL_SCALE", WAIST_HEIGHT_MAX)
-_waist_angle_full_scale = _full_scale(
-    "WAIST_ANGLE_FULL_SCALE", WAIST_ANGLE_MAX_DEGREES
-)
+_waist_angle_full_scale = _full_scale("WAIST_ANGLE_FULL_SCALE", WAIST_ANGLE_MAX_DEGREES)
 _arm_right_j1_scale = _sign_scale("ARM_RIGHT_J1_SCALE")
 _arm_left_j1_scale = _sign_scale("ARM_LEFT_J1_SCALE")
 
@@ -372,7 +368,7 @@ def register_routes(app: FastAPI, should_exit) -> None:
                     continue
                 try:
                     await asyncio.wait_for(_state_event.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 _state_event.clear()
             await websocket.close()

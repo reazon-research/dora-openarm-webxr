@@ -119,19 +119,35 @@ function rearViewportRect(view, viewport, eye) {
 
   const left = toPixels(
     REAR_VIEW.centerX - REAR_VIEW.width / 2,
-    eye.x, scaleX, offsetX, viewport.x, viewport.width,
+    eye.x,
+    scaleX,
+    offsetX,
+    viewport.x,
+    viewport.width,
   );
   const right = toPixels(
     REAR_VIEW.centerX + REAR_VIEW.width / 2,
-    eye.x, scaleX, offsetX, viewport.x, viewport.width,
+    eye.x,
+    scaleX,
+    offsetX,
+    viewport.x,
+    viewport.width,
   );
   const bottom = toPixels(
     REAR_VIEW.centerY - REAR_VIEW.height / 2,
-    eye.y, scaleY, offsetY, viewport.y, viewport.height,
+    eye.y,
+    scaleY,
+    offsetY,
+    viewport.y,
+    viewport.height,
   );
   const top = toPixels(
     REAR_VIEW.centerY + REAR_VIEW.height / 2,
-    eye.y, scaleY, offsetY, viewport.y, viewport.height,
+    eye.y,
+    scaleY,
+    offsetY,
+    viewport.y,
+    viewport.height,
   );
 
   // Clamped so a narrow headset field of view shrinks the window rather than
@@ -425,7 +441,11 @@ class PanoramaView {
       // Negative x flips the ray, so the window reads like a car's rear-view
       // mirror: something behind and to the left shows on the left, which is
       // what the operator needs when steering the base backward.
-      gl.uniform2f(this.#uniforms.u_projection_scale, -scale, (scale * width) / height);
+      gl.uniform2f(
+        this.#uniforms.u_projection_scale,
+        -scale,
+        (scale * width) / height,
+      );
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     gl.disable(gl.SCISSOR_TEST);

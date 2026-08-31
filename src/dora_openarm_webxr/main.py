@@ -1042,7 +1042,6 @@ def main():
 
     video.configure(args)
     theta.configure(video.view_configuration())
-    theta.configure(video.view_configuration())
 
     global _CALIBRATION_ENABLED, _ICE_SERVERS, _NECK_PIVOT_FILE, _QUIT_BUTTONS
     _CALIBRATION_ENABLED = args.calibration

@@ -142,9 +142,7 @@ def handle_event(event) -> bool:
         return True
     if camera_id in WRIST_CAMERA_INPUTS:
         side = WRIST_CAMERA_INPUTS[camera_id]
-        _wrist_frames[side] = event["value"].to_numpy(
-            zero_copy_only=False
-        ).tobytes()
+        _wrist_frames[side] = event["value"].to_numpy(zero_copy_only=False).tobytes()
         _wrist_sequences[side] += 1
         _wrist_frame_event.set()
         return True
@@ -191,7 +189,7 @@ def register_routes(app: FastAPI, should_exit) -> None:
                     continue
                 try:
                     await asyncio.wait_for(_wrist_frame_event.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 _wrist_frame_event.clear()
             await websocket.close()

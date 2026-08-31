@@ -693,11 +693,7 @@ class HudPanel {
         const halfHeight =
           (halfWidth * panel.canvas.height) / panel.canvas.width;
         gl.uniform2f(this.#uniforms.u_half_extent, halfWidth, halfHeight);
-        gl.uniform2f(
-          this.#uniforms.u_center,
-          panel.centerX,
-          panel.centerY,
-        );
+        gl.uniform2f(this.#uniforms.u_center, panel.centerX, panel.centerY);
         gl.uniform1f(this.#uniforms.u_distance, panel.distance);
         gl.bindTexture(gl.TEXTURE_2D, this.#textures.get(panel.id));
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

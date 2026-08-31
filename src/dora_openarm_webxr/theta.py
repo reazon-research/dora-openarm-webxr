@@ -9,10 +9,9 @@ import asyncio
 import os
 import threading
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import requests
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from requests.auth import HTTPDigestAuth
-
 
 _configuration: dict = {}
 _latest_frame: bytes | None = None
@@ -159,7 +158,7 @@ def register_routes(app: FastAPI, should_exit) -> None:
                     continue
                 try:
                     await asyncio.wait_for(event.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 event.clear()
                 with _frame_lock:
