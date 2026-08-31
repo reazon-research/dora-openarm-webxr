@@ -33,8 +33,8 @@ from dora_openarm_webxr import theta, video, webrtc
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
-    # No STUN: the tests connect over loopback, and an unreachable STUN
-    # server would only slow gathering down.
+    # Keep the LAN-only default explicit so individual tests cannot leak a
+    # custom STUN/TURN server into the next test.
     monkeypatch.setattr(webrtc, "ICE_SERVERS", [])
     video.reset()
     theta.reset()
@@ -542,8 +542,8 @@ def test_peer_built_with_passed_ice_servers(monkeypatch):
 
 
 def test_peer_built_with_default_ice_servers(monkeypatch):
-    # With none handed in, peers fall back to the module default, which
-    # the autouse fixture has emptied for these offline tests.
+    # With none handed in, peers use host candidates only: this is the
+    # direct-LAN default and avoids public STUN gathering delays.
     captured = _capture_ice_servers(monkeypatch)
     server = webrtc.WebRTCServer(
         on_frame=lambda payload: None,

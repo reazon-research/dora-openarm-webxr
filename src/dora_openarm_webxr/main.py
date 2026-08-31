@@ -155,9 +155,9 @@ _QUIT_BUTTONS: tuple = ()
 _NECK_PIVOT_FILE = None
 
 # The ICE servers every peer is built with, from --ice-servers. None means
-# webrtc's default public STUN server; the signaling service passes its own
-# list -- short-lived TURN credentials included -- when a direct path cannot
-# be counted on.
+# webrtc's LAN-only default with no STUN or TURN server; the signaling service
+# passes its own list -- short-lived TURN credentials included -- when a direct
+# path cannot be counted on.
 _ICE_SERVERS = None
 
 
@@ -963,7 +963,7 @@ def main():
             '[{"urls": [...], "username": ..., "credential": ...}]. '
             "This is how a signaling service passes the short-lived TURN "
             "credentials it mints, for networks where a direct path cannot "
-            "be counted on (default: a public STUN server only)"
+            "be counted on (default: no ICE servers, for direct LAN use)"
         ),
     )
     parser.add_argument(

@@ -28,13 +28,11 @@
 // not be lost: the node's configuration push, session-start, the select
 // and squeeze events, and what came of a calibration run.
 
-const CONFIGURATION = {
-  iceServers: [
-    {
-      urls: ["stun:stun.cloudflare.com:3478"],
-    },
-  ],
-};
+// The robot and browsers are normally on the same LAN, where host candidates
+// connect directly. Avoid waiting for an unreachable public STUN server before
+// the one-shot offer is sent. A deployment that crosses NAT must supply its own
+// STUN/TURN configuration together with its signaling service.
+const CONFIGURATION = { iceServers: [] };
 
 // The page makes its offer before the node can push the view configuration.
 // Four slots cover the largest layout: stereo head video and two wrist views.

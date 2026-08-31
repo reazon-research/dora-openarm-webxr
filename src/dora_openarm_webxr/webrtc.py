@@ -66,16 +66,11 @@ _CLOCK_RATE = 90_000
 # head view and therefore needs only three. Unused transceivers stay inactive.
 VIDEO_TRANSCEIVERS = 4
 
-_STUN_URL = "stun:stun.cloudflare.com:3478"
-
-# The ICE servers a peer is built with when the caller passes none. A
-# public STUN server is enough when a direct path exists; on one LAN
-# the host candidates alone connect. Behind a symmetric NAT or a
-# UDP-blocking firewall only a TURN relay connects, and TURN needs
-# credentials, so it cannot live in a default: the signaling service
-# mints short-lived ones per session and hands them in through
-# ``ice_servers``.
-ICE_SERVERS = [RTCIceServer(urls=[_STUN_URL])]
+# The default deployment keeps robot and browser on one LAN, where host
+# candidates connect directly. In particular, no public STUN lookup means an
+# offline LAN does not spend tens of seconds gathering candidates. A signaling
+# service crossing NAT must pass its own STUN/TURN list through ``ice_servers``.
+ICE_SERVERS: list[RTCIceServer] = []
 
 
 def parse_ice_servers(text: str) -> list[RTCIceServer]:
@@ -206,9 +201,10 @@ class WebRTCServer:
         """Prepare a server; no peer exists until an offer is answered.
 
         ``ice_servers`` is what every peer is built with; None means the
-        default public STUN server. The signaling service passes its own
-        list here when a direct path cannot be counted on, since a TURN
-        relay only works with the short-lived credentials it mints.
+        LAN-only default with no STUN or TURN server. The signaling service
+        passes its own list here when a direct path cannot be counted on,
+        since a TURN relay only works with the short-lived credentials it
+        mints.
         """
         self._on_frame = on_frame
         self._on_session_start = on_session_start
