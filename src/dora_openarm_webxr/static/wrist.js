@@ -46,7 +46,16 @@ const DEFAULT_PANEL = {
   // behind shows through, so a panel costs awareness of what is around it
   // rather than taking a bite out of it.
   opacity: 1.0,
+  // How much larger a panel is drawn while its thumbstick zoom is on. The
+  // panel grows about its own center, so where it hangs does not change.
+  zoom: 2.0,
 };
+
+// Bounds on the configured zoom. Below 1 the button would shrink the panel,
+// which is not what pressing it asks for, and a mistyped large value would
+// leave one wrist video across the whole view with no way back but the
+// button that caused it.
+const ZOOM_RANGE = { minimum: 1.0, maximum: 4.0 };
 
 // The gripper's force, as a strip immediately below each wrist video. Below
 // rather than over it: the bottom of a wrist view is where the fingers and the
@@ -121,6 +130,10 @@ class WristPanels {
   #captionContext = null;
   #captionTexture = null;
   #captionStale = false;
+  // Which panels are drawn enlarged, and the thumbstick state each was last
+  // told, so the toggle happens once per press rather than once per frame.
+  #zoomed = { left: false, right: false };
+  #zoomPressed = { left: false, right: false };
 
   constructor(configuration, tracks, { clears }) {
     this.#configuration = configuration.wrist_panels || {};
@@ -129,6 +142,22 @@ class WristPanels {
       const track = tracks?.[`wrist-${side}`];
       this.#sources[side] = track ? createVideoSource(track) : null;
     }
+  }
+
+  setZoomButton(side, pressed) {
+    // The thumbstick arrives as a level once per frame, the way the HUD's
+    // X button does, so the press edge is found here: the panel toggles when
+    // the button goes down and stays as it is until the next press. An absent
+    // or asleep controller reports nothing, which reads as released and
+    // leaves the panel wherever the last press put it.
+    if (!(side in this.#zoomed)) {
+      return;
+    }
+    const down = pressed === true;
+    if (down && !this.#zoomPressed[side]) {
+      this.#zoomed[side] = !this.#zoomed[side];
+    }
+    this.#zoomPressed[side] = down;
   }
 
   setGripperMode(name, speedRadS, torqueNm) {
@@ -289,6 +318,13 @@ class WristPanels {
       DEFAULT_PANEL.opacity,
     );
     const opacity = Math.min(1, Math.max(0.05, configured));
+    const zoom = Math.min(
+      ZOOM_RANGE.maximum,
+      Math.max(
+        ZOOM_RANGE.minimum,
+        finiteNumber(this.#configuration.zoom, DEFAULT_PANEL.zoom),
+      ),
+    );
     // Only blended when it would do something. A fully solid panel is drawn
     // the way it always was, so nothing changes for a view that never asked
     // for transparency.
@@ -322,12 +358,19 @@ class WristPanels {
         view.transform.inverse.matrix,
       );
 
-      for (const side of SIDES) {
+      // Depth testing is off, so the later draw wins where two panels meet.
+      // An enlarged panel goes last for that reason: it is the one the
+      // operator just asked to look at.
+      const order = [
+        ...SIDES.filter((side) => !this.#zoomed[side]),
+        ...SIDES.filter((side) => this.#zoomed[side]),
+      ];
+      for (const side of order) {
         const size = this.#sizes[side];
         if (size.width === 0) {
           continue;
         }
-        const halfWidth = width / 2;
+        const halfWidth = (width * (this.#zoomed[side] ? zoom : 1)) / 2;
         const halfHeight = (halfWidth * size.height) / size.width;
         const center = centerFor(this.#configuration, side);
         gl.uniform2f(this.#uniforms.u_half_extent, halfWidth, halfHeight);

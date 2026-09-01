@@ -1,0 +1,199 @@
+<!doctype html>
+<!--
+  Copyright 2026 Enactic, Inc.
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+
+  Development harness. Drives the real WristPanels against two synthetic
+  wrist cameras and a stand-in XR frame, so the thumbstick zoom can be judged
+  without a headset or a robot. Not linked from the app.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wrist panel preview</title>
+    <style>
+      body {
+        margin: 0; padding: 1.5rem; background: #161b22; color: #c9d1d9;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      h1 { font-size: 1rem; margin: 0 0 1rem; }
+      canvas#view { display: block; border-radius: 8px; max-width: 100%; }
+      .controls { margin-top: 1rem; display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
+      button { font: inherit; padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer;
+               border: 1px solid #30363d; background: #21262d; color: #c9d1d9; }
+      button:active, button.down { background: #388bfd; border-color: #388bfd; color: #0d1117; }
+      code { color: #58a6ff; }
+      p.note { color: #8b949e; max-width: 52rem; }
+      b { color: #c9d1d9; }
+    </style>
+  </head>
+  <body>
+    <h1>Wrist panel preview — press a stick to enlarge that side</h1>
+    <canvas id="view" width="960" height="540"></canvas>
+    <div class="controls">
+      <button id="left" type="button">Left stick press</button>
+      <button id="right" type="button">Right stick press</button>
+      <label>
+        <code>zoom</code>
+        <input id="zoom" type="range" min="1" max="4" step="0.1" value="2">
+        <span id="zoom-value">2.0</span>&times;
+      </label>
+      <span>enlarged: <b id="state">neither</b></span>
+    </div>
+    <p class="note">
+      The two panels are the wrist cameras as the headset draws them, at the
+      configured <code>width</code> and <code>left_center</code> /
+      <code>right_center</code>. Press a button to send that side's thumbstick
+      down: the panel <b>toggles</b>, so it stays enlarged when the button
+      comes back up and goes back on the next press. Holding a button down
+      must not flip it repeatedly, which is what the harness checks by feeding
+      the button state every frame the way <code>ar.js</code> does. The slider
+      is the <code>wrist_panels.zoom</code> value from the view configuration,
+      read once per frame, so it can be judged live before being written into
+      the YAML. The gripper strip under each video is drawn here to show that
+      it grows with the panel. Colors and labels come from two synthetic
+      cameras, not a robot.
+    </p>
+
+    <script type="module">
+      import { createWristPanels } from "./wrist.js";
+
+      // ---- two synthetic wrist cameras -------------------------------------
+      // Real 4:3 tracks, captured off a canvas, so the harness drives the same
+      // video-source path the WebRTC tracks do rather than a stand-in for it.
+      const CAMERAS = {
+        left: { color: "#58a6ff", label: "WRIST LEFT" },
+        right: { color: "#f0883e", label: "WRIST RIGHT" },
+      };
+      const tracks = {};
+      for (const [side, camera] of Object.entries(CAMERAS)) {
+        const source = document.createElement("canvas");
+        source.width = 640; source.height = 480;
+        const g = source.getContext("2d");
+        function paint(now) {
+          g.fillStyle = "#0d1117";
+          g.fillRect(0, 0, 640, 480);
+          g.strokeStyle = "rgba(255,255,255,0.10)";
+          for (let x = 0; x <= 640; x += 80) {
+            g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 480); g.stroke();
+          }
+          for (let y = 0; y <= 480; y += 80) {
+            g.beginPath(); g.moveTo(0, y); g.lineTo(640, y); g.stroke();
+          }
+          // A moving mark, so a frozen texture is obvious as one.
+          const angle = (now / 1000) * (side === "left" ? 1 : -1);
+          g.strokeStyle = camera.color; g.lineWidth = 8;
+          g.beginPath();
+          g.arc(320, 260, 90, angle, angle + Math.PI * 1.4);
+          g.stroke();
+          g.fillStyle = camera.color;
+          g.font = "bold 44px system-ui";
+          g.textAlign = "center"; g.textBaseline = "middle";
+          g.fillText(camera.label, 320, 90);
+          g.font = "24px system-ui";
+          g.fillText("640 x 480", 320, 420);
+          requestAnimationFrame(paint);
+        }
+        requestAnimationFrame(paint);
+        tracks[`wrist-${side}`] = source.captureStream(30).getVideoTracks()[0];
+      }
+
+      // ---- the real panels, on the configuration the YAML carries ----------
+      // The object is handed straight to WristPanels and read once per frame,
+      // so the slider below can write into it and be seen immediately.
+      const wristPanels = {
+        enabled: true,
+        distance: 1.2,
+        width: 0.38,
+        left_center: [-0.55, 0.0],
+        right_center: [0.55, 0.0],
+        zoom: 2.0,
+      };
+      const panels = createWristPanels({ wrist_panels: wristPanels }, tracks, {
+        clears: false,
+      });
+      const canvas = document.getElementById("view");
+      const gl = canvas.getContext("webgl", { alpha: false });
+      panels.attach(gl);
+      // A gripper-mode node is what makes the strip appear; stand in for one
+      // so the caption under each video is part of what is being judged.
+      panels.setGripperMode("SOFT 60%", 60, 0.35);
+
+      // ---- a stand-in XR frame ---------------------------------------------
+      // One eye, at the origin, looking down -z: the panels hang in the
+      // viewer space, so an identity view matrix is the operator's head.
+      const FOV_Y = (70 * Math.PI) / 180;
+      const NEAR = 0.1;
+      const FAR = 100;
+      const f = 1 / Math.tan(FOV_Y / 2);
+      const aspect = canvas.width / canvas.height;
+      const projectionMatrix = new Float32Array([
+        f / aspect, 0, 0, 0,
+        0, f, 0, 0,
+        0, 0, (FAR + NEAR) / (NEAR - FAR), -1,
+        0, 0, (2 * FAR * NEAR) / (NEAR - FAR), 0,
+      ]);
+      const identity = new Float32Array([
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+      ]);
+      const xrView = {
+        projectionMatrix,
+        transform: { inverse: { matrix: identity } },
+      };
+      const session = { renderState: { baseLayer: {
+        framebuffer: null,
+        getViewport: () => ({ x: 0, y: 0, width: canvas.width, height: canvas.height }),
+      } } };
+      const xrFrame = { getViewerPose: () => ({ views: [xrView] }) };
+
+      // ---- the controls ----------------------------------------------------
+      const sticks = { left: false, right: false };
+      for (const side of ["left", "right"]) {
+        const button = document.getElementById(side);
+        const press = () => { sticks[side] = true; button.classList.add("down"); };
+        const release = () => { sticks[side] = false; button.classList.remove("down"); };
+        button.addEventListener("pointerdown", press);
+        button.addEventListener("pointerup", release);
+        button.addEventListener("pointerleave", release);
+      }
+      const zoom = document.getElementById("zoom");
+      const zoomValue = document.getElementById("zoom-value");
+      zoom.addEventListener("input", () => {
+        wristPanels.zoom = Number(zoom.value);
+        zoomValue.textContent = wristPanels.zoom.toFixed(1);
+      });
+      const state = document.getElementById("state");
+
+      // The panels keep their zoom state to themselves, so the label counts
+      // the presses independently. Deliberately a second implementation: if
+      // the label and the drawing ever disagree, the module's press edge is
+      // wrong, which is the thing this page exists to catch.
+      const expected = { left: false, right: false };
+      const wasDown = { left: false, right: false };
+
+      function draw() {
+        for (const side of ["left", "right"]) {
+          // Fed every frame, button held or not, the way ar.js feeds it out
+          // of the XR frame loop: the toggle has to come from the press edge.
+          panels.setZoomButton(side, sticks[side]);
+          if (sticks[side] && !wasDown[side]) {
+            expected[side] = !expected[side];
+          }
+          wasDown[side] = sticks[side];
+        }
+        const on = ["left", "right"].filter((side) => expected[side]);
+        state.textContent = on.length === 0 ? "neither" : on.join(" + ");
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.clearColor(0.09, 0.11, 0.13, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        panels.render(session, {}, xrFrame);
+        requestAnimationFrame(draw);
+      }
+      requestAnimationFrame(draw);
+    </script>
+  </body>
+</html>

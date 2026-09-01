@@ -56,6 +56,7 @@ DEFAULT_VIEW_CONFIGURATION: dict = {
         "width": 0.38,
         "left_center": [-0.55, 0.0],
         "right_center": [0.55, 0.0],
+        "zoom": 2.0,
     },
 }
 

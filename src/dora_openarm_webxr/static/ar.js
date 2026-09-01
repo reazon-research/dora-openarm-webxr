@@ -31,6 +31,7 @@ const FALLBACK_CONFIGURATION = {
     width: 0.38,
     left_center: [-0.55, 0.0],
     right_center: [0.55, 0.0],
+    zoom: 2.0,
   },
 };
 
@@ -319,6 +320,16 @@ if (navigator.xr) {
         if (gamepad.axes.length >= 2) {
           response[`joystick${suffix}`] = Array.from(gamepad.axes);
         }
+        // Pressing the thumbstick in enlarges that side's wrist panel, and
+        // pressing it again puts it back. Kept in the page rather than sent
+        // to the node: it changes how this view draws itself and nothing the
+        // robot does. The press is the fourth button under the xr-standard
+        // mapping; a controller without a stick has no such button, and
+        // reporting it as released leaves the panels alone.
+        wristPanels?.setZoomButton(
+          source.handedness,
+          gamepad.buttons[3]?.pressed === true,
+        );
       }
     }
     sendFrameResponse(response);

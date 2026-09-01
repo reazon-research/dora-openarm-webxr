@@ -15,6 +15,20 @@ theta360:
   framerate: 30
   yaw_offset_deg: 0
 
+wrist_panels:
+  # Where the two wrist videos hang, in meters; positive x is right and
+  # positive y is up.
+  distance: 1.0
+  width: 0.38
+  left_center: [-0.55, 0.0]
+  right_center: [0.55, 0.0]
+
+  # How much larger a panel is drawn once its thumbstick is pressed in:
+  # press to enlarge that side, press again to put it back. The panel
+  # grows about its own center, so where it hangs does not change.
+  # Clamped to 1..4 by static/wrist.js; 1 turns the zoom off.
+  zoom: 2.0
+
 pose:
   # Keep the existing fixed-view neutral hand position.
   frame_offset: [-0.1, 0.0, 0.23]

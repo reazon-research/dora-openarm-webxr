@@ -205,12 +205,21 @@ wrist_panels:
   width: 0.38
   left_center: [-0.55, 0.0]
   right_center: [0.55, 0.0]
+  zoom: 2.0
 ```
 
 Distances and centers are in meters; positive x is right and positive y is up.
 Set `enabled: false` to avoid opening the wrist video stream. In the Dora
 dataflow, give both camera inputs `queue_size: 1` so stale frames are dropped
 instead of building latency.
+
+Pressing a controller's thumbstick in enlarges that side's panel by `zoom`, and
+pressing it again puts the panel back to `width`: the left controller's stick
+works the left panel, the right controller's the right, and both may be
+enlarged at once. The panel grows about its own center, so where it hangs does
+not change, and the enlarged one is drawn over its neighbour. `zoom` is clamped
+to between 1 and 4, and `1` turns the feature off. The press only changes how
+this view draws itself, so nothing about it reaches the robot.
 
 ## Head-locked HUD
 
