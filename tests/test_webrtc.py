@@ -86,6 +86,37 @@ async def _wait_for(predicate, timeout: float = 10.0) -> None:
         await asyncio.sleep(0.05)
 
 
+def test_robot_control_jitter_buffer():
+    asyncio.run(_run_robot_control_jitter_buffer())
+
+
+async def _run_robot_control_jitter_buffer():
+    played = []
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    jitter_buffer = webrtc._FrameJitterBuffer(
+        lambda payload: played.append((payload["sequence"], loop.time())),
+        delay=0.070,
+    )
+    try:
+        # Frame 2 arrives first and frame 1 arrives 10 ms later. Their WebXR
+        # times still make them play in order, 70 ms behind the source clock.
+        jitter_buffer.push({"type": "frame", "sequence": 2, "time": 1010.0})
+        await asyncio.sleep(0.010)
+        jitter_buffer.push({"type": "frame", "sequence": 1, "time": 1000.0})
+        jitter_buffer.push({"type": "frame", "sequence": 3, "time": 1020.0})
+
+        await asyncio.sleep(0.030)
+        assert played == []
+        await _wait_for(lambda: len(played) == 3)
+
+        assert [sequence for sequence, _when in played] == [1, 2, 3]
+        assert played[0][1] - started >= 0.045
+        assert played[-1][1] - played[0][1] <= 0.040
+    finally:
+        jitter_buffer.close()
+
+
 def _browser_peer(received: dict) -> tuple:
     # An in-process stand-in for connection.js: the "xr" channel, the
     # VIDEO_TRANSCEIVERS recvonly video slots, and handlers that collect
@@ -532,9 +563,7 @@ def test_all_theta_view_tracks_decode(monkeypatch):
 
 async def _decode_all_theta_view_tracks():
     clock = webrtc._SharedClock()
-    tracks = [
-        webrtc._JpegVideoTrack(role, clock) for role in webrtc.track_roles()
-    ]
+    tracks = [webrtc._JpegVideoTrack(role, clock) for role in webrtc.track_roles()]
     frames = await asyncio.gather(*(track.recv() for track in tracks))
     assert len(frames) == 3
     assert all((frame.width, frame.height) == (64, 48) for frame in frames)

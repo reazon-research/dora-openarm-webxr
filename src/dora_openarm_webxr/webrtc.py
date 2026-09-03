@@ -27,7 +27,9 @@ Two data channels, split by what they can afford to lose:
   (72-120 Hz on a Quest 3). Only the newest pose is worth anything, so a
   lost frame is dropped rather than retransmitted; the next one
   supersedes it. Frames carry a ``sequence`` so the receiver can drop the
-  stale ones an unordered channel occasionally delivers late.
+  stale ones an unordered channel occasionally delivers late. Before the
+  robot sees them, a 70 ms application-level jitter buffer plays them on
+  their WebXR source timeline.
 * ``control`` -- opened by this node, reliable and ordered. Carries the
   things that must not be lost: the node pushes the view configuration
   and the calibration flag once on open, the browser sends
@@ -44,7 +46,9 @@ independent timelines.
 
 import asyncio
 import fractions
+import heapq
 import json
+import math
 import time
 
 import av
@@ -66,6 +70,11 @@ _CLOCK_RATE = 90_000
 # largest view: stereo head video plus both wrist cameras. THETA replaces the
 # head view and therefore needs only three. Unused transceivers stay inactive.
 VIDEO_TRANSCEIVERS = 4
+
+# Re-time controller frames from their WebXR timestamps before they reach the
+# robot. This is deliberately application-level: browsers do not expose a
+# receive jitter-buffer setting for RTCDataChannel.
+ROBOT_CONTROL_JITTER_BUFFER = 0.070
 
 # aiortc does not expose RTCRtpSender.setParameters(), so its VP8 encoder
 # module is the supported control point available to this application. Keep the
@@ -214,6 +223,73 @@ class _JpegVideoTrack(VideoStreamTrack):
         return frame
 
 
+class _FrameJitterBuffer:
+    """Play controller frames on their source timeline after a fixed delay."""
+
+    def __init__(self, callback, delay: float = ROBOT_CONTROL_JITTER_BUFFER):
+        self._callback = callback
+        self._delay = delay
+        self._queue: list[tuple[float, int, dict]] = []
+        self._next_id = 0
+        self._sender_origin: float | None = None
+        self._playout_origin: float | None = None
+        self._timer: asyncio.TimerHandle | None = None
+        self._closed = False
+
+    def push(self, payload: dict) -> None:
+        """Queue one frame, using its WebXR time to remove arrival jitter."""
+        if self._closed:
+            return
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        sender_time = payload.get("time")
+        if (
+            isinstance(sender_time, (int, float))
+            and not isinstance(sender_time, bool)
+            and math.isfinite(sender_time)
+        ):
+            sender_time /= 1000.0  # DOMHighResTimeStamp is in milliseconds.
+            if self._sender_origin is None:
+                self._sender_origin = sender_time
+                self._playout_origin = now + self._delay
+            deadline = self._playout_origin + sender_time - self._sender_origin
+        else:
+            # Older senders without a timestamp still get the requested delay,
+            # although their arrival jitter cannot be corrected.
+            deadline = now + self._delay
+
+        heapq.heappush(self._queue, (deadline, self._next_id, payload))
+        self._next_id += 1
+        self._schedule()
+
+    def close(self) -> None:
+        """Discard pending robot commands and cancel their timer."""
+        self._closed = True
+        self._queue.clear()
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+    def _schedule(self) -> None:
+        if not self._queue:
+            return
+        loop = asyncio.get_running_loop()
+        deadline = self._queue[0][0]
+        if self._timer is not None:
+            if self._timer.when() <= deadline:
+                return
+            self._timer.cancel()
+        self._timer = loop.call_at(max(deadline, loop.time()), self._release)
+
+    def _release(self) -> None:
+        self._timer = None
+        now = asyncio.get_running_loop().time()
+        while self._queue and self._queue[0][0] <= now:
+            _deadline, _item_id, payload = heapq.heappop(self._queue)
+            self._callback(payload)
+        self._schedule()
+
+
 class WebRTCServer:
     """The robot half of the WebXR peer connection.
 
@@ -244,6 +320,7 @@ class WebRTCServer:
         self._pcs: set = set()
         self._controls: set = set()
         self._track_roles: dict = {}
+        self._frame_buffers: dict = {}
         self._running = True
 
     @property
@@ -266,6 +343,10 @@ class WebRTCServer:
         self._pcs.clear()
         self._controls.clear()
         self._track_roles.clear()
+        frame_buffers = list(self._frame_buffers.values())
+        self._frame_buffers.clear()
+        for frame_buffer in frame_buffers:
+            frame_buffer.close()
         for pc in pcs:
             await pc.close()
 
@@ -290,6 +371,9 @@ class WebRTCServer:
         except Exception:
             self._pcs.discard(pc)
             self._track_roles.pop(pc, None)
+            frame_buffer = self._frame_buffers.pop(pc, None)
+            if frame_buffer is not None:
+                frame_buffer.close()
             await pc.close()
             raise
 
@@ -347,6 +431,9 @@ class WebRTCServer:
             await pc.close()
             self._pcs.discard(pc)
             self._track_roles.pop(pc, None)
+            frame_buffer = self._frame_buffers.pop(pc, None)
+            if frame_buffer is not None:
+                frame_buffer.close()
             raise RuntimeError(
                 f"no WebRTC connection within {connect_timeout:g}s of the answer"
             )
@@ -420,10 +507,21 @@ class WebRTCServer:
         def on_datachannel(channel) -> None:
             if channel.label != "xr":
                 return
+            frame_buffer = _FrameJitterBuffer(self._on_frame)
+            old_buffer = self._frame_buffers.get(pc)
+            if old_buffer is not None:
+                old_buffer.close()
+            self._frame_buffers[pc] = frame_buffer
 
             @channel.on("message")
             def on_message(message: object) -> None:
-                self._handle_frame_message(message)
+                self._handle_frame_message(message, frame_buffer)
+
+            @channel.on("close")
+            def on_close() -> None:
+                if self._frame_buffers.get(pc) is frame_buffer:
+                    self._frame_buffers.pop(pc)
+                    frame_buffer.close()
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
@@ -439,6 +537,9 @@ class WebRTCServer:
                 self._pcs.discard(pc)
                 self._controls.discard(control)
                 self._track_roles.pop(pc, None)
+                frame_buffer = self._frame_buffers.pop(pc, None)
+                if frame_buffer is not None:
+                    frame_buffer.close()
                 await pc.close()
 
         return pc
@@ -450,12 +551,14 @@ class WebRTCServer:
         if payload.get("type") == "session-start":
             self._on_session_start()
 
-    def _handle_frame_message(self, message: object) -> None:
+    def _handle_frame_message(
+        self, message: object, frame_buffer: _FrameJitterBuffer
+    ) -> None:
         payload = _decode(message)
         if payload is None:
             return
         if payload.get("type") == "frame":
-            self._on_frame(payload)
+            frame_buffer.push(payload)
 
 
 def _decode(message: object) -> dict | None:
