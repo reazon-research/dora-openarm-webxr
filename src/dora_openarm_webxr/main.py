@@ -826,9 +826,10 @@ async def _main_dora():
     try:
         while _serving():
             if node.is_empty():
-                await asyncio.sleep(0.001)
-                continue
-            event = node.next()
+                # Keep WebRTC responsive; the timeout lets shutdown flags be checked.
+                event = await asyncio.to_thread(node.next, 0.1)
+            else:
+                event = node.next()
             # None is the event stream closing under us, which is how a
             # dataflow being torn down can look from here: treat it like
             # STOP rather than crashing out of the loop with _stop() unrun.
