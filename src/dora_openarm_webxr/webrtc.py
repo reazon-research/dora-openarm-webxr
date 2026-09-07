@@ -228,6 +228,7 @@ class WebRTCServer:
         on_session_start,
         calibration_enabled: bool = False,
         ice_servers: list[RTCIceServer] | None = None,
+        on_session_end=None,
     ) -> None:
         """Prepare a server; no peer exists until an offer is answered.
 
@@ -239,6 +240,8 @@ class WebRTCServer:
         """
         self._on_frame = on_frame
         self._on_session_start = on_session_start
+        self._on_session_end = on_session_end
+        self._active_peer = None
         self._calibration_enabled = calibration_enabled
         self._ice_servers = ice_servers
         self._pcs: set = set()
@@ -262,6 +265,7 @@ class WebRTCServer:
 
     async def close(self) -> None:
         """Close every peer connection."""
+        self._end_session(self._active_peer)
         pcs = list(self._pcs)
         self._pcs.clear()
         self._controls.clear()
@@ -411,10 +415,11 @@ class WebRTCServer:
         @control.on("close")
         def on_control_close() -> None:
             self._controls.discard(control)
+            self._end_session(pc)
 
         @control.on("message")
         def on_control_message(message: object) -> None:
-            self._handle_control_message(message)
+            self._handle_control_message(message, pc)
 
         @pc.on("datachannel")
         def on_datachannel(channel) -> None:
@@ -423,7 +428,11 @@ class WebRTCServer:
 
             @channel.on("message")
             def on_message(message: object) -> None:
-                self._handle_frame_message(message)
+                self._handle_frame_message(message, pc)
+
+            @channel.on("close")
+            def on_close() -> None:
+                self._end_session(pc)
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange() -> None:
@@ -436,6 +445,7 @@ class WebRTCServer:
             # still recover.
             print(f"WebRTC peer state: {pc.connectionState}", flush=True)
             if pc.connectionState in ("failed", "closed"):
+                self._end_session(pc)
                 self._pcs.discard(pc)
                 self._controls.discard(control)
                 self._track_roles.pop(pc, None)
@@ -443,14 +453,23 @@ class WebRTCServer:
 
         return pc
 
-    def _handle_control_message(self, message: object) -> None:
+    def _end_session(self, pc) -> None:
+        if pc is not None and pc is self._active_peer:
+            self._active_peer = None
+            if self._on_session_end is not None:
+                self._on_session_end()
+
+    def _handle_control_message(self, message: object, pc) -> None:
         payload = _decode(message)
         if payload is None:
             return
         if payload.get("type") == "session-start":
+            self._active_peer = pc
             self._on_session_start()
 
-    def _handle_frame_message(self, message: object) -> None:
+    def _handle_frame_message(self, message: object, pc) -> None:
+        if pc is not self._active_peer:
+            return
         payload = _decode(message)
         if payload is None:
             return
