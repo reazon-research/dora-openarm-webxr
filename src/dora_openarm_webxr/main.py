@@ -133,6 +133,23 @@ _NECK_PIVOT_OFFSET: np.ndarray = np.array([0.0, -0.075, 0.080], dtype=np.float32
 # can start by accident.
 _CALIBRATION_ENABLED: bool = False
 
+# Where each gripper sits at either end of its trigger's travel, in radians.
+# The open angle is where a released trigger leaves it and the closed one is
+# where a fully pulled trigger takes it, so how far in a grip goes is the
+# closed angle: past zero, as here, asks for an angle the closed jaws cannot
+# reach, which is how a grip holds an object rather than merely touching it;
+# short of zero stops the jaws apart instead, for a grip that must not close.
+#
+# Kept per side and signed, rather than one pair the right hand negates,
+# because the two hands are two grippers: the sign is only the mirrored
+# mounting, and the travel either one is given is the hardware's and the
+# task's, not something the other hand has to match.
+#
+# All four come from --gripper-open-angle-{left,right} and
+# --gripper-closed-angle-{left,right}.
+_GRIPPER_OPEN_ANGLE = {"left": 1.57, "right": -1.57}
+_GRIPPER_CLOSED_ANGLE = {"left": -0.4, "right": 0.4}
+
 # The controller buttons published as outputs, and the names --quit-button
 # accepts.
 _BUTTONS = ("a", "b", "x", "y")
@@ -436,11 +453,15 @@ app = FastAPI()
 
 
 def _map_trigger_to_gripper(trigger: float, side: str) -> float:
-    """Trigger 0.0~1.0 -> gripper angle."""
-    if side == "right":
-        return (-1.57 / 2.0) * (1.0 - trigger)  # 0->-1.57, 1->0
-    else:
-        return (1.57 / 2.0) * (1.0 - trigger)  # 0-> 1.57, 1->0
+    """Trigger 0.0~1.0 -> gripper angle.
+
+    A released trigger holds this side's gripper at its _GRIPPER_OPEN_ANGLE
+    and a fully pulled one takes it to its _GRIPPER_CLOSED_ANGLE, with
+    everything between the two read off the trigger linearly.
+    """
+    closed = _GRIPPER_CLOSED_ANGLE[side]
+    span = _GRIPPER_OPEN_ANGLE[side] - closed
+    return closed + span * (1.0 - min(max(trigger, 0.0), 1.0))
 
 
 def _adjust_pose(pose, reference, smoother, smoother_time):
@@ -1004,6 +1025,62 @@ def main():
         ),
     )
     parser.add_argument(
+        "--gripper-open-angle-left",
+        type=float,
+        default=float(
+            os.getenv("GRIPPER_OPEN_ANGLE_LEFT", str(_GRIPPER_OPEN_ANGLE["left"]))
+        ),
+        help=(
+            "The left gripper's angle in radians while its trigger is "
+            f"released (default: {_GRIPPER_OPEN_ANGLE['left']})"
+        ),
+    )
+    parser.add_argument(
+        "--gripper-closed-angle-left",
+        type=float,
+        default=float(
+            os.getenv(
+                "GRIPPER_CLOSED_ANGLE_LEFT",
+                str(_GRIPPER_CLOSED_ANGLE["left"]),
+            )
+        ),
+        help=(
+            "The left gripper's angle in radians with its trigger fully "
+            "pulled, which is how far in that hand grips. Past zero asks for "
+            "more than the closed jaws can reach, so the grip holds rather "
+            "than touches; short of zero stops the jaws apart "
+            f"(default: {_GRIPPER_CLOSED_ANGLE['left']})"
+        ),
+    )
+    parser.add_argument(
+        "--gripper-open-angle-right",
+        type=float,
+        default=float(
+            os.getenv("GRIPPER_OPEN_ANGLE_RIGHT", str(_GRIPPER_OPEN_ANGLE["right"]))
+        ),
+        help=(
+            "The right gripper's angle in radians while its trigger is "
+            f"released (default: {_GRIPPER_OPEN_ANGLE['right']})"
+        ),
+    )
+    parser.add_argument(
+        "--gripper-closed-angle-right",
+        type=float,
+        default=float(
+            os.getenv(
+                "GRIPPER_CLOSED_ANGLE_RIGHT",
+                str(_GRIPPER_CLOSED_ANGLE["right"]),
+            )
+        ),
+        help=(
+            "The right gripper's angle in radians with its trigger fully "
+            "pulled, which is how far in that hand grips. Past zero asks for "
+            "more than the closed jaws can reach, so the grip holds rather "
+            "than touches; short of zero stops the jaws apart "
+            f"(default: {_GRIPPER_CLOSED_ANGLE['right']})"
+        ),
+    )
+    parser.add_argument(
         "--quit-button",
         action="append",
         choices=list(_BUTTONS),
@@ -1064,6 +1141,23 @@ def main():
             "button to measure the neck pivot"
         )
 
+    # Each hand's open angle is what says which way that gripper opens, so the
+    # closed angle has to sit on the closing side of it -- toward zero, and
+    # past zero for a grip that presses. A pair the other way round would have
+    # the trigger open the gripper as it is pulled, which is the two entered
+    # swapped rather than a gripper anyone wants, and an open angle of zero
+    # names no direction to close along at all.
+    for side in ("left", "right"):
+        open_angle = getattr(args, f"gripper_open_angle_{side}")
+        closed_angle = getattr(args, f"gripper_closed_angle_{side}")
+        if open_angle == 0.0 or (open_angle - closed_angle) * open_angle <= 0.0:
+            parser.error(
+                f"--gripper-closed-angle-{side} {closed_angle} is not on the "
+                f"closing side of --gripper-open-angle-{side} {open_angle}: "
+                "the closed angle has to lie toward zero from the open one, "
+                "or past it, so that pulling the trigger closes the gripper"
+            )
+
     # Parsed at startup so a malformed list is a startup error, not a
     # peer that quietly cannot connect. An empty value means unset, so a
     # dataflow YAML can carry ``ICE_SERVERS: ""`` and have it mean the
@@ -1092,6 +1186,10 @@ def main():
     _ICE_SERVERS = ice_servers
     _NECK_PIVOT_FILE = args.neck_pivot_file
     _QUIT_BUTTONS = tuple(quit_buttons)
+
+    for side in ("left", "right"):
+        _GRIPPER_OPEN_ANGLE[side] = getattr(args, f"gripper_open_angle_{side}")
+        _GRIPPER_CLOSED_ANGLE[side] = getattr(args, f"gripper_closed_angle_{side}")
 
     # Read once at startup; restart the dataflow to apply a change.
     pose_configuration = video.view_configuration().get("pose") or {}
