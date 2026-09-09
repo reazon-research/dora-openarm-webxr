@@ -195,7 +195,7 @@ class _JpegVideoTrack(VideoStreamTrack):
                 self._role, self._seen_sequence
             )
             try:
-                frames = self._decoder.decode(av.Packet(jpeg))
+                frames = await asyncio.to_thread(self._decoder.decode, av.Packet(jpeg))
             except av.error.FFmpegError:
                 if not self._warned_decode:
                     self._warned_decode = True
