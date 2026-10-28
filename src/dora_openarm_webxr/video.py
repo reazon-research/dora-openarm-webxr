@@ -83,6 +83,16 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         default=os.getenv("VIEW_CONFIGURATION_FILE"),
         help="YAML file with the camera panel parameters",
     )
+    parser.add_argument(
+        "--video-workers",
+        type=int,
+        default=int(os.getenv("VIDEO_WORKERS", "0")),
+        help=(
+            "Worker threads for JPEG decoding and WebRTC encoding; "
+            "0 keeps asyncio's default (default: 0). "
+            "Does not set the encoder's internal thread count"
+        ),
+    )
 
 
 def configure(args: argparse.Namespace) -> None:

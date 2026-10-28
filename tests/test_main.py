@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -310,3 +316,234 @@ def test_session_end_clears_cached_targets(node, monkeypatch):
     main._publish_poses(state)
     assert state.latest_frame is None
     assert node.ids().count("pose_right") == 1
+
+
+def _pose(position, rotation):
+    return dict(
+        zip(
+            ("x", "y", "z", "qx", "qy", "qz", "qw"),
+            [*position, *rotation.as_quat()],
+            strict=True,
+        )
+    )
+
+
+def _adjust(pose, reference):
+    return np.asarray(
+        main._adjust_pose(pose, reference, main.OneEuroPoseSmoother(), 1.0)
+    )
+
+
+def test_neck_mode_keeps_target_fixed_when_head_rotates_about_pivot(monkeypatch):
+    monkeypatch.setattr(main, "_POSE_MODE", "neck")
+    pivot = np.array([0.2, 1.4, -0.1])
+    hand_position = np.array([0.4, 1.2, -0.5])
+    hand_rotation = main.Rotation.from_euler("xyz", [15, -20, 35], degrees=True)
+    expected_position = (
+        main._ROBOT_ROTATION.apply(hand_position - pivot) + main._FRAME_OFFSET_CELL
+    )
+    expected_rotation = main._ROBOT_ROTATION * hand_rotation * main._CONTROLLER_TO_EE
+    for angles in ([0, 0, 0], [25, 60, -15]):
+        head_rotation = main.Rotation.from_euler("xyz", angles, degrees=True)
+        head_position = pivot - head_rotation.apply(main._NECK_PIVOT_OFFSET)
+        result = _adjust(
+            _pose(hand_position, hand_rotation), _pose(head_position, head_rotation)
+        )
+        np.testing.assert_allclose(result[:3], expected_position, atol=1e-6)
+        assert abs(result[3:] @ expected_rotation.as_quat()[[3, 0, 1, 2]]) == (
+            pytest.approx(1.0, abs=1e-6)
+        )
+
+
+def test_relative_mode_follows_reference_frame_and_ignores_neck(monkeypatch):
+    monkeypatch.setattr(main, "_POSE_MODE", "relative")
+    monkeypatch.setattr(main, "_NECK_PIVOT_OFFSET", np.array([10.0, 20.0, 30.0]))
+    relative_position = np.array([0.2, -0.3, -0.4])
+    relative_rotation = main.Rotation.from_euler("xyz", [20, 40, -10], degrees=True)
+    expected_position = (
+        main._ROBOT_ROTATION.apply(relative_position) + main._FRAME_OFFSET_CELL
+    )
+    expected_rotation = (
+        main._ROBOT_ROTATION * relative_rotation * main._CONTROLLER_TO_EE
+    )
+    for angles, head_position in (([0, 0, 0], [0, 0, 0]), ([25, 60, -15], [1, 2, 3])):
+        head_rotation = main.Rotation.from_euler("xyz", angles, degrees=True)
+        hand_position = head_rotation.apply(relative_position) + head_position
+        result = _adjust(
+            _pose(hand_position, head_rotation * relative_rotation),
+            _pose(head_position, head_rotation),
+        )
+        np.testing.assert_allclose(result[:3], expected_position, atol=1e-6)
+        assert abs(result[3:] @ expected_rotation.as_quat()[[3, 0, 1, 2]]) == (
+            pytest.approx(1.0, abs=1e-6)
+        )
+
+
+@pytest.mark.parametrize(
+    ("mode", "calibrate", "error"),
+    [
+        (None, False, None),
+        ("relative", False, None),
+        ("relative", True, "--calibration requires pose.mode=neck"),
+        ("invalid", False, "pose.mode must be 'neck' or 'relative'"),
+    ],
+)
+def test_pose_mode_configuration(node, monkeypatch, capsys, mode, calibrate, error):
+    argv = ["webxr", "--offer", "test", "--answer-port", "1234"]
+    if calibrate:
+        argv.append("--calibration")
+    monkeypatch.setattr(sys, "argv", argv)
+    for name in ("args", "_POSE_MODE", "_CALIBRATION_ENABLED", "_NECK_PIVOT_FILE"):
+        monkeypatch.setattr(main, name, getattr(main, name))
+    monkeypatch.setattr(main.video, "configure", lambda args: None)
+    pose = {} if mode is None else {"mode": mode}
+    monkeypatch.setattr(main.video, "view_configuration", lambda: {"pose": pose})
+    neck_reads = []
+    monkeypatch.setattr(
+        main, "_configure_neck_pivot", lambda *args: neck_reads.append(args)
+    )
+    monkeypatch.setattr(main.dora, "Node", lambda: node)
+
+    async def run():
+        pass
+
+    monkeypatch.setattr(main, "_main_async", run)
+    if error:
+        with pytest.raises(SystemExit) as exc:
+            main.main()
+        assert exc.value.code == 2
+        assert error in capsys.readouterr().err
+    else:
+        main.main()
+        assert main._POSE_MODE == (mode or "neck")
+        assert len(neck_reads) == (0 if mode == "relative" else 1)
+
+
+@pytest.mark.parametrize("ending", [None, {"type": "STOP"}, "error"])
+def test_dora_reader_does_not_wait_for_video_pool(node, monkeypatch, ending):
+    readers = []
+
+    def read(timeout):
+        assert timeout == 0.1
+        readers.append(threading.current_thread())
+        if ending == "error":
+            raise RuntimeError("read failed")
+        return ending
+
+    node.is_empty = lambda: True
+    node.next = read
+    monkeypatch.setattr(main, "_serving", lambda: True)
+    monkeypatch.setattr(main, "_QUIT_BUTTONS", ("a",))
+    monkeypatch.setattr(main, "server", None)
+    monkeypatch.setattr(main, "_running", True)
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        release = threading.Event()
+        busy = loop.run_in_executor(None, release.wait)
+        task = asyncio.create_task(main._main_dora())
+
+        async def wait_for_read():
+            while not readers:
+                await asyncio.sleep(0.001)
+
+        try:
+            await asyncio.wait_for(wait_for_read(), 2)
+            assert not busy.done()
+        finally:
+            release.set()
+            await busy
+            await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 2)
+        if ending == "error":
+            with pytest.raises(RuntimeError, match="read failed"):
+                task.result()
+        else:
+            task.result()
+
+    asyncio.run(run())
+    assert node.value("command")[0].as_py() == "quit"
+    assert not main._running
+    assert len(readers) == 1
+    assert readers[0].name.startswith("webxr-dora")
+    assert not readers[0].is_alive()
+
+
+def test_cancelled_dora_reader_keeps_loop_responsive_and_joins(node, monkeypatch):
+    release = threading.Event()
+    readers, released = [], []
+    node.is_empty = lambda: True
+    monkeypatch.setattr(main, "_serving", lambda: True)
+    monkeypatch.setattr(main, "_QUIT_BUTTONS", ("a",))
+    monkeypatch.setattr(main, "server", None)
+    monkeypatch.setattr(main, "_running", True)
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+
+        def read(timeout):
+            assert timeout == 0.1
+            readers.append(threading.current_thread())
+            loop.call_soon_threadsafe(started.set)
+            released.append(release.wait(2))
+
+        node.next = read
+        task = asyncio.create_task(main._main_dora())
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            task.cancel()
+            await asyncio.sleep(0)
+            # This coroutine must resume while cleanup is still joining the reader.
+            assert not task.done()
+            assert node.value("command")[0].as_py() == "quit"
+            assert not main._running
+        finally:
+            release.set()
+            if not task.cancelling():
+                task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+
+    asyncio.run(run())
+    assert released == [True]
+    assert len(readers) == 1
+    assert not readers[0].is_alive()
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+@pytest.mark.parametrize("offer", [None, "offer"])
+def test_video_pool_configuration_and_shutdown(monkeypatch, workers, offer):
+    pools, threads = [], []
+
+    def create_pool(**kwargs):
+        pools.append(kwargs)
+        return ThreadPoolExecutor(**kwargs)
+
+    async def hosted():
+        threads.append(await asyncio.to_thread(threading.current_thread))
+
+    monkeypatch.setattr(
+        main, "args", SimpleNamespace(video_workers=workers, offer=offer)
+    )
+    monkeypatch.setattr(main, "_state", None)
+    monkeypatch.setattr(main, "webrtc_server", None)
+    monkeypatch.setattr(main, "ThreadPoolExecutor", create_pool)
+    monkeypatch.setattr(main, "_main_hosted", hosted)
+    monkeypatch.setattr(main, "_main_webrtc_only", hosted)
+    asyncio.run(main._main_async())
+    assert pools == (
+        [{"max_workers": workers, "thread_name_prefix": "webxr-video"}]
+        if workers
+        else []
+    )
+    assert not threads[0].is_alive()
+
+
+def test_negative_video_workers_rejected(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["webxr", "--video-workers", "-1"])
+    monkeypatch.setattr(main, "args", None)
+    with pytest.raises(SystemExit) as error:
+        main.main()
+    assert error.value.code == 2
+    assert "--video-workers must be non-negative" in capsys.readouterr().err

@@ -114,6 +114,37 @@ remain receive-driven. HUD timer actions are still processed once per received
 frame; other HUD telemetry remains Dora-event-driven. THETA, head/wrist video,
 bitrate settings and configurable gripper angles are unchanged.
 
+## Pose timing
+
+From 0.6.0, hand pose output requires a `tick` input. Each received XR
+frame replaces the raw target cache; each tick converts, filters and
+publishes the latest targets. There is no trajectory interpolation or
+extra worker. The examples use `dora/timer/millis/2` (500 Hz) and matching
+IK `--tick-hz 500` with kinematics >=0.2.2 / openarm-control >=0.4.0.
+
+Filtering matches dora-openarm-vr: One Euro parameters are
+`min_cutoff=2.0`, `beta=0.04`, `d_cutoff=1.5`, using actual monotonic time
+between updates. Linear and angular speeds are capped at 1 m/s and
+6 rad/s by default; set either limit to 0 to disable it.
+
+A missing hand pose or trigger pauses that hand; a missing head reference
+or active calibration pauses both. Pausing preserves the last filtered
+pose, clears its velocity estimate and advances its clock on every tick,
+so recovery does not accumulate a large time step. New sessions instead
+reset the filters: their first valid target passes through unchanged.
+
+Only the most recently started peer supplies targets. Closing its data
+channel, or a failed/closed peer connection, clears the cache; old peers'
+frames and close events cannot affect the active session. Silent packet
+loss is different: by default ticks keep using the cached target, like
+UDP VR. Optional `--pose-timeout 0.2` pauses poses after 0.2 seconds without
+a new accepted frame. It defaults to 0 (disabled), uses receive time, and
+does not send a robot stop command.
+
+Hand pose metadata timestamps mark tick publication. `vr_receive_times`,
+buttons, triggers, joysticks, head-reference output and calibration samples
+remain receive-driven; video handling is unchanged.
+
 ## WebRTC-only mode
 
 By default this node serves the page itself, which is why it needs a
@@ -204,11 +235,28 @@ The example files pair them the two useful ways:
   works its camera and alignment parameters out from a ZED camera's
   factory calibration.
 
+Both files accept `pose.mode`, read once at startup:
+
+- `neck` (default): positions are relative to the estimated neck pivot;
+  position axes and controller orientation stay aligned with WebXR local space.
+- `relative`: apply the inverse of the current headset pose to both controller
+  position and orientation. The reference updates each frame; it is not latched.
+  Neck offsets and the neck-pivot file are ignored, and `--calibration` is rejected.
+
+```yaml
+pose:
+  mode: neck # neck or relative
+```
+
+Both modes share the robot-frame mapping, end-effector rotation correction,
+filtering, and speed limits. `pose_reference` remains the original headset pose.
+Restart the node after changing the mode.
+
 Both files also take `pose.frame_offset`: the neutral hand position
 relative to the `arm_origin` site in meters, overriding the built-in
 default of `[-0.085, 0, -0.14]`.
 
-They also take `pose.neck_pivot_offset`: the operator's eyes to the
+In `neck` mode, they also take `pose.neck_pivot_offset`: the operator's eyes to the
 neck's rotation axis, in the headset's own frame, overriding the
 built-in default of `[0.0, -0.075, 0.080]`. Hand positions are made
 relative to that pivot rather than to the headset itself, so turning the
@@ -565,11 +613,19 @@ useful in a dora-rs dataflow YAML.
 | `--gripper-closed-angle-right` | `GRIPPER_CLOSED_ANGLE_RIGHT` | `0.4` | The right gripper's angle in radians with its trigger fully pulled. Each hand's travel is given on its own, so the two need not match. |
 | `--quit-button`          | `QUIT_BUTTON`          | (none)      | The controller button (`a`, `b`, `x` or `y`) that shuts the node down when pressed. Giving this option also publishes `"quit"` on the `command` output whenever the node exits, even by an error rather than the button. May be repeated for several buttons; the environment variable takes a comma-separated list. |
 | `--view-configuration-file` | `VIEW_CONFIGURATION_FILE` | (none)  | The YAML file that describes how the head camera is drawn in the VR device. Read once when the node starts. |
+| `--video-workers` | `VIDEO_WORKERS` | `0` | Worker threads for JPEG decoding and WebRTC encoding; `0` keeps asyncio's default. |
 | `--calibration`          | `CALIBRATION`          | off         | Measure the neck pivot with the Y button, and show the instructions for it in the headset. Off unless asked for. |
 | `--neck-pivot-file`      | `NECK_PIVOT_FILE`      | `neck_pivot.yaml` | The YAML file a measured neck pivot offset is written to, and read back from at startup. |
 | `--max-linear-speed`    | `MAX_LINEAR_SPEED`    | `1.0`       | Maximum filtered hand translation speed in m/s; 0 disables the limit. |
 | `--max-angular-speed`   | `MAX_ANGULAR_SPEED`   | `6.0`       | Maximum filtered hand rotation speed in rad/s; 0 disables the limit. |
 | `--pose-timeout`        | `POSE_TIMEOUT`        | `0`         | Seconds without a new accepted XR frame before pausing hand poses; 0 disables the timeout. |
+
+Dora input waits use a separate single-thread executor, so they do not queue
+behind video jobs. For a CPU-constrained deployment, set `VIDEO_WORKERS` on the
+WebXR node (for example, `4`) and measure video latency and pose output rate.
+This limits the shared asyncio worker pool.
+It does not change resolution, frame rate, bitrate or quality settings. Leave
+it at `0` unless measurements justify a limit.
 
 ## License
 
